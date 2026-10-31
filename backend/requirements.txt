@@ -7,3 +7,4 @@ numpy<2
 opencv-contrib-python>=4.8,<4.12
 mediapipe==0.10.21
 protobuf>=4.25.3,<5
+ai-edge-litert>=2.3.0

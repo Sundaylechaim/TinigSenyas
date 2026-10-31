@@ -48,6 +48,9 @@ void main() {
 
       final noCam = NoCameraAvailableException('No camera found');
       expect(noCam.message, 'No camera found');
+
+      final inUse = CameraInUseException('Camera in use');
+      expect(inUse.message, 'Camera in use');
     });
   });
 }

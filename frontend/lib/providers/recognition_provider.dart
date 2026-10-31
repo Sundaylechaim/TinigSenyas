@@ -4,9 +4,13 @@ import '../models/sign_result.dart';
 import '../services/recognition/recognition_service.dart';
 import '../services/recognition/mock_recognition_service.dart';
 import '../services/recognition/tflite_recognition_service.dart';
+import '../services/recognition/backend_recognition_service.dart';
 
 RecognitionService createRecognitionService({bool useMock = false}) {
-  return useMock ? MockRecognitionService() : TfliteRecognitionService();
+  if (useMock) return MockRecognitionService();
+  // On web or desktop, connect to the high-performance ST-GCN backend service
+  if (kIsWeb) return BackendRecognitionService();
+  return TfliteRecognitionService();
 }
 
 class RecognitionProvider extends ChangeNotifier {

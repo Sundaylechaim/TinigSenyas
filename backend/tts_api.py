@@ -53,10 +53,10 @@ def _is_loopback_origin(origin: Optional[str]) -> bool:
     )
 
 
-def _synthesize_edge_tts_audio(text: str, voice: str, rate: int) -> bytes:
+async def _synthesize_edge_tts_audio(text: str, voice: str, rate: int) -> bytes:
     import edge_tts
 
-    async def synthesize() -> bytes:
+    try:
         communicate = edge_tts.Communicate(
             text,
             voice,
@@ -67,9 +67,6 @@ def _synthesize_edge_tts_audio(text: str, voice: str, rate: int) -> bytes:
             if chunk["type"] == "audio":
                 audio.extend(chunk["data"])
         return bytes(audio)
-
-    try:
-        return asyncio.run(asyncio.wait_for(synthesize(), timeout=45))
     except (
         edge_tts.exceptions.EdgeTTSException,
         OSError,
@@ -143,7 +140,7 @@ async def synthesize_speech(
 
     if not speech_key or not _REGION_PATTERN.fullmatch(region):
         try:
-            audio = _synthesize_edge_tts_audio(text, voice, rate)
+            audio = await _synthesize_edge_tts_audio(text, voice, rate)
         except TtsProviderError as error:
             logger.warning("Microsoft Edge TTS request failed: %s", error)
             return JSONResponse(status_code=502, content={"error": "The speech provider is currently unavailable."})

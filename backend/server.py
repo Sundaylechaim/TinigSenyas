@@ -1,5 +1,14 @@
 import logging
 import os
+import sys
+import warnings
+
+# Suppress noisy oneDNN and deprecation terminal spam
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import cv2
 import mediapipe as mp
 import uvicorn
@@ -15,20 +24,46 @@ from hand_tracker import HandTracker, HandValidationResult
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tinigsenyas.backend")
 
+try:
+    from sign_classifier import SignClassifier
+    HAS_SIGN_CLASSIFIER = True
+except Exception as _e:
+    logger.warning("SignClassifier not loaded yet: %s", _e)
+    HAS_SIGN_CLASSIFIER = False
+
 app = FastAPI(
     title="TinigSenyas Backend API",
     description="Multimodal Sign Language Translation & Asynchronous OTA Synchronization Backend for KAINAKAP Inclusive and Opportunity Inc.",
     version="1.0.0",
 )
 
-# Enable CORS for Flutter web / mobile clients
+# Secure CORS configuration for Flutter web / mobile clients
+ALLOWED_ORIGINS = [
+    "http://localhost:5001",
+    "http://127.0.0.1:5001",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    """Enforces standard web security headers on all API responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 # Mount TTS Router
 app.include_router(tts_api)
@@ -86,25 +121,49 @@ async def get_vocabulary_sync():
     return _DEFAULT_VOCABULARY
 
 # ---------------------------------------------------------------------------
-# MediaPipe Camera Stream & Hand Tracking Diagnostics
+# MediaPipe Camera Stream & ST-GCN Sign Language Classification
 # ---------------------------------------------------------------------------
 
 latest_hand_result: Optional[HandValidationResult] = None
 latest_hand_features: dict = {}
-global_hand_tracker: Optional[HandTracker] = None
+latest_prediction: dict = {
+    "label": None,
+    "confidence": 0.0,
+    "top2_label": "",
+    "top2_confidence": 0.0,
+    "hands_count": 0,
+    "buffer_progress": 0.0,
+    "window_duration_seconds": 2.0,
+    "is_stable": False,
+}
+global_classifier = None
 
 
 def generate_frames():
-    global latest_hand_result, latest_hand_features, global_hand_tracker
+    global latest_hand_result, latest_hand_features, latest_prediction, global_classifier
     camera = cv2.VideoCapture(0)
-    tracker = HandTracker(
-        max_num_hands=2,
-        min_detection_confidence=0.6,
-        min_tracking_confidence=0.5,
-        smoothing_alpha=0.7,
-        mirror_camera=True,
-    )
-    global_hand_tracker = tracker
+    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    classifier = None
+    if HAS_SIGN_CLASSIFIER:
+        try:
+            classifier = SignClassifier()
+            global_classifier = classifier
+            logger.info("ST-GCN SignClassifier active for live video feed.")
+        except Exception as exc:
+            logger.error("Failed to initialize SignClassifier, falling back to HandTracker: %s", exc)
+
+    tracker = None
+    if classifier is None:
+        tracker = HandTracker(
+            max_num_hands=2,
+            min_detection_confidence=0.6,
+            min_tracking_confidence=0.5,
+            smoothing_alpha=0.7,
+            mirror_camera=True,
+        )
 
     try:
         while True:
@@ -112,9 +171,13 @@ def generate_frames():
             if not success:
                 break
 
-            processed_frame, result = tracker.process_frame(frame)
-            latest_hand_result = result
-            latest_hand_features = tracker.extract_model_features(result)
+            if classifier is not None:
+                processed_frame, pred_payload = classifier.process_frame(frame)
+                latest_prediction = pred_payload
+            else:
+                processed_frame, result = tracker.process_frame(frame)
+                latest_hand_result = result
+                latest_hand_features = tracker.extract_model_features(result)
 
             ret, buffer = cv2.imencode(".jpg", processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if not ret:
@@ -127,19 +190,29 @@ def generate_frames():
             )
     finally:
         camera.release()
-        tracker.close()
+        if classifier:
+            classifier.close()
+        if tracker:
+            tracker.close()
 
 
 @app.get("/video_feed", tags=["Camera Stream"])
 def video_feed():
     """
-    Live MJPEG stream with MediaPipe multi-hand tracking, handedness classification,
-    and horizontal Left-to-Right FOV diagnostic guidelines.
+    Live MJPEG stream with real-time MediaPipe ST-GCN sign language recognition HUD.
     """
     return StreamingResponse(
         generate_frames(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@app.get("/api/v1/predict/live", tags=["Sign Language Recognition"])
+def get_live_prediction():
+    """
+    Returns the real-time ST-GCN predicted FSL sign gesture, confidence score, and buffer progress.
+    """
+    return latest_prediction
 
 
 @app.get("/api/v1/hands/status", tags=["Hand Validation"])

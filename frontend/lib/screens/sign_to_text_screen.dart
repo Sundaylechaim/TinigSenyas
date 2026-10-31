@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:camera/camera.dart';
 import '../providers/recognition_provider.dart';
@@ -12,6 +14,7 @@ import '../widgets/camera_preview.dart';
 import '../widgets/prediction_overlay.dart';
 import '../widgets/signing_space_overlay.dart';
 import '../widgets/connectivity_badge.dart';
+import '../services/word_prediction_service.dart';
 
 const Color _kAppBlue = Color(0xFF0138FF);
 const Color _kAppYellow = Color(0xFFFFC801);
@@ -23,7 +26,7 @@ class SignToTextScreen extends StatefulWidget {
   State<SignToTextScreen> createState() => _SignToTextScreenState();
 }
 
-class _SignToTextScreenState extends State<SignToTextScreen> {
+class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBindingObserver {
   late CameraService _cameraService;
   late TtsService _ttsService;
   SignResult? _currentPrediction;
@@ -35,13 +38,23 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
   bool _isProcessingFrame = false;
   String? _cameraError;
   String? _recognitionError;
+  bool _useBackendFeed = kIsWeb;
   RecognitionProvider? _recognitionProvider;
   StreamSubscription<SignResult>? _predictionSubscription;
   StreamSubscription<CameraImage>? _frameSubscription;
 
+  // Smart Word Assembler & Intent Prediction State
+  final WordPredictionService _wordPredictionService = WordPredictionService();
+  String _activeWordBuffer = '';
+  String _composedSentence = '';
+  List<String> _suggestedWords = [];
+  String? _lastAppendedLetter;
+  DateTime _lastLetterTime = DateTime.fromMillisecondsSinceEpoch(0);
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _cameraService = CameraService();
     _ttsService = context.read<TtsService>();
     _recognitionProvider = context.read<RecognitionProvider>();
@@ -49,12 +62,48 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
       prediction,
     ) {
       if (mounted) {
+        if (_currentPrediction?.label != prediction.label) {
+          // Tactile haptic feedback for Deaf / Hard-of-Hearing users
+          HapticFeedback.mediumImpact();
+        }
         setState(() {
           _currentPrediction = prediction;
         });
+        _handlePredictionAssembly(prediction);
       }
     });
-    _checkPermissionAndStart();
+
+    if (kIsWeb) {
+      _useBackendFeed = true;
+      _isCheckingPermission = false;
+      _hasPermission = true;
+      _isCameraInitialized = true;
+      _isModelReady = true;
+      _recognitionProvider?.initialize().then((_) {
+        _recognitionProvider?.start();
+        if (mounted) setState(() => _isModelReady = true);
+      });
+    } else {
+      _useBackendFeed = false;
+      _checkPermissionAndStart();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (kIsWeb) return;
+    if (!_hasPermission) return;
+
+    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      _cameraService.dispose();
+      if (mounted) {
+        setState(() => _isCameraInitialized = false);
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      if (!_useBackendFeed) {
+        _initializeCamera();
+      }
+    }
   }
 
   Future<void> _checkPermissionAndStart() async {
@@ -97,7 +146,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
       await _cameraService.initialize(direction: CameraLensDirection.front);
       await _recognitionProvider!.initialize();
       await _recognitionProvider!.start();
-      _isModelReady = _recognitionProvider!.isModelReady;
+      final isReady = _recognitionProvider!.isModelReady;
 
       _restartFrameStream();
 
@@ -105,6 +154,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
         setState(() {
           _hasPermission = true;
           _isCameraInitialized = true;
+          _isModelReady = isReady;
           _cameraError = null;
         });
       }
@@ -295,8 +345,101 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
     }
   }
 
+  void _handlePredictionAssembly(SignResult prediction) {
+    final label = prediction.label.trim();
+    // Check if the prediction is a single letter (A-Z or Ñ)
+    final isSingleLetter = label.length == 1 &&
+        (RegExp(r'^[A-ZÑ]$', caseSensitive: false).hasMatch(label));
+
+    final now = DateTime.now();
+
+    if (isSingleLetter) {
+      // Debounce: append new letter if it differs from last letter OR user has held sign for >= 1200ms
+      final isNewLetter = label != _lastAppendedLetter;
+      final isHeldDuration = now.difference(_lastLetterTime).inMilliseconds >= 1200;
+
+      if (isNewLetter || isHeldDuration) {
+        setState(() {
+          _activeWordBuffer += label.toUpperCase();
+          _lastAppendedLetter = label;
+          _lastLetterTime = now;
+          _suggestedWords = _wordPredictionService.getPredictions(_activeWordBuffer);
+        });
+      }
+    } else if (label.length > 1 && prediction.confidence >= 0.60) {
+      // If a full gesture word is signed (e.g., "Salamat" or "Kamusta"), suggest it directly
+      setState(() {
+        if (!_suggestedWords.contains(label)) {
+          _suggestedWords.insert(0, label);
+          if (_suggestedWords.length > 4) {
+            _suggestedWords = _suggestedWords.sublist(0, 4);
+          }
+        }
+      });
+    }
+  }
+
+  void _acceptWordSuggestion(String word) {
+    HapticFeedback.lightImpact();
+    setState(() {
+      if (_composedSentence.isEmpty) {
+        _composedSentence = word;
+      } else {
+        _composedSentence += ' $word';
+      }
+      _activeWordBuffer = '';
+      _suggestedWords = [];
+      _lastAppendedLetter = null;
+    });
+  }
+
+  void _backspaceLetter() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (_activeWordBuffer.isNotEmpty) {
+        _activeWordBuffer = _activeWordBuffer.substring(0, _activeWordBuffer.length - 1);
+        _suggestedWords = _wordPredictionService.getPredictions(_activeWordBuffer);
+      } else if (_composedSentence.isNotEmpty) {
+        final words = _composedSentence.split(' ');
+        words.removeLast();
+        _composedSentence = words.join(' ');
+      }
+      _lastAppendedLetter = null;
+    });
+  }
+
+  void _clearSentence() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _activeWordBuffer = '';
+      _composedSentence = '';
+      _suggestedWords = [];
+      _lastAppendedLetter = null;
+    });
+  }
+
+  void _speakComposedSentence() async {
+    final textToSpeak = _composedSentence.isNotEmpty
+        ? (_activeWordBuffer.isNotEmpty ? '$_composedSentence $_activeWordBuffer' : _composedSentence)
+        : _activeWordBuffer;
+
+    if (textToSpeak.trim().isNotEmpty) {
+      HapticFeedback.mediumImpact();
+      try {
+        await _ttsService.speak(textToSpeak.trim());
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Speech synthesis error: $e')),
+          );
+        }
+      }
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _predictionSubscription?.cancel();
     _frameSubscription?.cancel();
     _cameraService.dispose();
@@ -359,7 +502,19 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
           ],
         ),
         actions: [
-          if (_isCameraInitialized && _cameraService.canSwitchCamera)
+          IconButton(
+            icon: Icon(_useBackendFeed ? Icons.sensors_rounded : Icons.videocam_rounded),
+            tooltip: _useBackendFeed ? 'Switch to Browser Direct Camera' : 'Switch to Backend AI Video Stream',
+            onPressed: () {
+              setState(() {
+                _useBackendFeed = !_useBackendFeed;
+                if (!_useBackendFeed && !_isCameraInitialized) {
+                  _checkPermissionAndStart();
+                }
+              });
+            },
+          ),
+          if (!_useBackendFeed && _isCameraInitialized && _cameraService.canSwitchCamera)
             IconButton(
               icon: const Icon(Icons.cameraswitch_rounded),
               tooltip: 'Switch Camera',
@@ -374,6 +529,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
   }
 
   Widget _buildBody() {
+    if (_useBackendFeed) {
+      return _buildBackendFeedView();
+    }
+
     if (_isCheckingPermission) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -563,43 +722,228 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
 
   Widget _buildErrorState() {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final isPermIssue = _isPermanentlyDenied ||
         (_cameraError != null && _cameraError!.toLowerCase().contains('permission'));
+    final isInUseIssue = _cameraError != null &&
+        (_cameraError!.toLowerCase().contains('notreadable') ||
+            _cameraError!.toLowerCase().contains('in use') ||
+            _cameraError!.toLowerCase().contains('hardware error'));
 
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error_outline_rounded, size: 56, color: theme.colorScheme.error),
-            const SizedBox(height: 16),
-            Text(
-              isPermIssue ? 'Camera Permission Issue' : 'Camera Error',
-              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _cameraError ?? 'Unable to connect to camera.',
-              style: theme.textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            if (isPermIssue) ...[
-              ElevatedButton.icon(
-                onPressed: () async => await _cameraService.openSettings(),
-                icon: const Icon(Icons.settings_rounded),
-                label: const Text('Open System Settings'),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: Container(
+              padding: const EdgeInsets.all(26),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? const Color(0xFF0C1220).withValues(alpha: 0.85)
+                    : Colors.white.withValues(alpha: 0.90),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: isDark ? Colors.white12 : Colors.black12,
+                ),
               ),
-              const SizedBox(height: 10),
-            ],
-            ElevatedButton.icon(
-              onPressed: _initializeCamera,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Retry Camera'),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 70,
+                    height: 70,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: (isInUseIssue ? Colors.orange : theme.colorScheme.error)
+                          .withValues(alpha: 0.12),
+                    ),
+                    child: Icon(
+                      isInUseIssue
+                          ? Icons.videocam_off_rounded
+                          : Icons.error_outline_rounded,
+                      size: 38,
+                      color: isInUseIssue ? Colors.orange : theme.colorScheme.error,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    isInUseIssue
+                        ? 'Camera Locked or In Use'
+                        : isPermIssue
+                            ? 'Camera Permission Issue'
+                            : 'Camera Error',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    isInUseIssue
+                        ? 'Your webcam is currently locked by another application or browser tab. Windows only allows one app to access the camera at a time.'
+                        : (_cameraError ?? 'Unable to connect to camera.'),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                      height: 1.4,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (isInUseIssue) ...[
+                    const SizedBox(height: 18),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: isDark
+                            ? Colors.black.withValues(alpha: 0.3)
+                            : const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Quick Troubleshooting Steps:',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          const SizedBox(height: 8),
+                          _buildTroubleshootItem('1. Close other apps using your webcam (Zoom, Teams, Discord, OBS, or Camera app).'),
+                          _buildTroubleshootItem('2. Check if another browser tab or window has camera access enabled.'),
+                          _buildTroubleshootItem('3. If you ran a Python test script (validate_hand_tracking.py), press Q or close its terminal.'),
+                          _buildTroubleshootItem('4. In Windows Settings > Privacy & security > Camera, ensure Chrome has camera access allowed.'),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  if (isPermIssue) ...[
+                    ElevatedButton.icon(
+                      onPressed: () async => await _cameraService.openSettings(),
+                      icon: const Icon(Icons.settings_rounded),
+                      label: const Text('Open System Settings'),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  ElevatedButton.icon(
+                    onPressed: _initializeCamera,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _kAppBlue,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text(
+                      'Retry Camera',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _cameraError = null;
+                        _useBackendFeed = true;
+                      });
+                    },
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _kAppBlue,
+                      side: const BorderSide(color: _kAppBlue, width: 1.5),
+                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    icon: const Icon(Icons.videocam_rounded),
+                    label: const Text(
+                      'Use Backend AI Video Stream',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildBackendFeedView() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (kIsWeb)
+          HtmlElementView.fromTagName(
+            tagName: 'img',
+            onElementCreated: (Object element) {
+              final img = element as dynamic;
+              img.src = 'http://127.0.0.1:5000/video_feed';
+              img.style.width = '100%';
+              img.style.height = '100%';
+              img.style.objectFit = 'cover';
+              img.style.pointerEvents = 'none';
+            },
+          )
+        else
+          Image.network(
+            'http://127.0.0.1:5000/video_feed',
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+            errorBuilder: (context, error, stackTrace) => Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.videocam_off_rounded, size: 48, color: Colors.orange),
+                  const SizedBox(height: 12),
+                  const Text('Backend video feed connecting on port 5000...'),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: () => setState(() {}),
+                    child: const Text('Retry Feed'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SigningSpaceOverlay(),
+        Positioned(
+          top: 100,
+          left: 16,
+          right: 16,
+          child: _buildRecognitionStatus(),
+        ),
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildFingerspellingWordAssembler(),
+              _buildActionCard(),
+            ],
+          ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTroubleshootItem(String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 12, height: 1.3),
       ),
     );
   }
@@ -625,10 +969,168 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
           right: 0,
           child: Container(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-            child: _buildActionCard(),
+            child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildFingerspellingWordAssembler(),
+              _buildActionCard(),
+            ],
+          ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildFingerspellingWordAssembler() {
+    if (_activeWordBuffer.isEmpty && _composedSentence.isEmpty && _suggestedWords.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: isDark
+                  ? const Color(0xFF0F172A).withValues(alpha: 0.90)
+                  : Colors.white.withValues(alpha: 0.95),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: _kAppBlue.withValues(alpha: 0.35),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Top bar: Composed sentence and active letter buffer
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: _kAppBlue.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.spellcheck_rounded, color: _kAppBlue, size: 18),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: isDark ? Colors.white : const Color(0xFF0F172A),
+                          ),
+                          children: [
+                            if (_composedSentence.isNotEmpty)
+                              TextSpan(
+                                text: '$_composedSentence ',
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            if (_activeWordBuffer.isNotEmpty)
+                              TextSpan(
+                                text: _activeWordBuffer,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  color: _kAppBlue,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.backspace_outlined, size: 18),
+                      tooltip: 'Backspace',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: _backspaceLetter,
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.volume_up_rounded, color: _kAppBlue, size: 20),
+                      tooltip: 'Speak sentence',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: _speakComposedSentence,
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      tooltip: 'Clear',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: _clearSentence,
+                    ),
+                  ],
+                ),
+
+                // Suggested words row (Autocomplete & Intent Predictor)
+                if (_suggestedWords.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Text(
+                        'Suggestions:',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: _suggestedWords.map((word) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: ActionChip(
+                                  avatar: const Icon(Icons.auto_awesome, size: 13, color: _kAppBlue),
+                                  label: Text(
+                                    word,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                  ),
+                                  backgroundColor: isDark
+                                      ? const Color(0xFF1E293B)
+                                      : const Color(0xFFEFF6FF),
+                                  side: BorderSide(
+                                    color: _kAppBlue.withValues(alpha: 0.3),
+                                  ),
+                                  onPressed: () => _acceptWordSuggestion(word),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -636,29 +1138,32 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final hasPrediction = _currentPrediction != null;
+    final isReady = _isModelReady || (_recognitionProvider?.isModelReady ?? false);
+    final confidence = _currentPrediction?.confidence ?? 0.0;
+    final isConfidenceHigh = confidence >= 0.70;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: Container(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
           decoration: BoxDecoration(
             color: isDark
-                ? const Color(0xFF0C1220).withValues(alpha: 0.85)
-                : Colors.white.withValues(alpha: 0.90),
+                ? const Color(0xFF0C1220).withValues(alpha: 0.90)
+                : Colors.white.withValues(alpha: 0.95),
             borderRadius: BorderRadius.circular(24),
             border: Border.all(
               color: isDark
-                  ? Colors.white.withValues(alpha: 0.16)
-                  : Colors.white.withValues(alpha: 0.80),
+                  ? Colors.white.withValues(alpha: 0.20)
+                  : Colors.white,
               width: 1.5,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
-                blurRadius: 16,
-                offset: const Offset(0, 4),
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
               ),
             ],
           ),
@@ -668,81 +1173,135 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: hasPrediction
-                          ? _kAppBlue.withValues(alpha: 0.15)
+                          ? (isConfidenceHigh
+                              ? const Color(0xFF10B981).withValues(alpha: 0.18)
+                              : _kAppBlue.withValues(alpha: 0.15))
                           : Colors.grey.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      hasPrediction ? Icons.check_circle_rounded : Icons.radar_rounded,
-                      color: hasPrediction ? _kAppBlue : Colors.grey,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
                       hasPrediction
-                          ? 'Recognized: ${_currentPrediction!.label}'
-                          : _isModelReady
-                          ? 'Position hand gestures in frame...'
-                          : 'FSL recognition model is in training',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        color: isDark ? Colors.white : const Color(0xFF0F172A),
+                          ? (isConfidenceHigh ? Icons.verified_rounded : Icons.check_circle_rounded)
+                          : Icons.radar_rounded,
+                      color: hasPrediction
+                          ? (isConfidenceHigh ? const Color(0xFF10B981) : _kAppBlue)
+                          : Colors.grey,
+                      size: 26,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Semantics(
+                      liveRegion: true,
+                      label: hasPrediction
+                          ? 'Recognized Filipino sign: ${_currentPrediction!.label}, confidence ${(confidence * 100).toInt()} percent'
+                          : isReady
+                              ? 'Camera ready. Position hand gestures in frame to sign.'
+                              : 'Initializing sign recognition model.',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            hasPrediction
+                                ? _currentPrediction!.label
+                                : isReady
+                                    ? 'Position hands to sign...'
+                                    : 'Initializing FSL model...',
+                            style: TextStyle(
+                              fontSize: hasPrediction ? 22 : 15,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: hasPrediction ? 0.4 : 0.0,
+                              color: isDark ? Colors.white : const Color(0xFF0F172A),
+                            ),
+                          ),
+                          if (hasPrediction)
+                            Text(
+                              'Filipino Sign Language',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
-                  if (hasPrediction && _isModelReady)
+                  if (hasPrediction && isReady)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: _kAppYellow,
-                        borderRadius: BorderRadius.circular(10),
+                        color: isConfidenceHigh
+                            ? const Color(0xFF10B981)
+                            : (confidence >= 0.60 ? _kAppBlue : _kAppYellow),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: (isConfidenceHigh ? const Color(0xFF10B981) : _kAppYellow).withValues(alpha: 0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                      child: Text(
-                        '${(_currentPrediction!.confidence * 100).toInt()}%',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 12,
-                          color: Color(0xFF111827),
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isConfidenceHigh ? Icons.verified_rounded : Icons.trending_up_rounded,
+                            size: 14,
+                            color: (isConfidenceHigh || confidence >= 0.60) ? Colors.white : const Color(0xFF111827),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${(confidence * 100).toInt()}%',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                              color: (isConfidenceHigh || confidence >= 0.60) ? Colors.white : const Color(0xFF111827),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                 ],
               ),
               const SizedBox(height: 16),
               Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  if (hasPrediction && _isModelReady) ...[
+                  if (hasPrediction && isReady) ...[
                     _ActionButton(
                       icon: Icons.volume_up_rounded,
                       label: 'Speak',
+                      tooltip: 'Pronounce sign in Filipino voice',
+                      semanticLabel: 'Speak recognized sign aloud',
                       onPressed: _speakCurrentPrediction,
                       color: _kAppBlue,
                     ),
-                    const SizedBox(width: 16),
                     _ActionButton(
                       icon: Icons.bookmark_add_rounded,
                       label: 'Save',
+                      tooltip: 'Save sign to history',
+                      semanticLabel: 'Save sign to history',
                       onPressed: _saveCurrentPrediction,
                       color: _kAppYellow,
                     ),
-                    const SizedBox(width: 16),
                     _ActionButton(
                       icon: Icons.replay_rounded,
                       label: 'Repeat',
+                      tooltip: 'Replay voice translation',
+                      semanticLabel: 'Repeat spoken sign',
                       onPressed: _speakCurrentPrediction,
                       color: isDark ? Colors.white70 : const Color(0xFF475569),
                     ),
-                  ] else if (!_isModelReady) ...[
+                  ] else if (!isReady) ...[
                     Expanded(
                       child: Text(
-                        'Camera preview is ready. Sign recognition will be enabled when the trained model is integrated.',
+                        'Initializing sign recognition model...',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 13,
@@ -754,6 +1313,8 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
                     _ActionButton(
                       icon: Icons.menu_book_rounded,
                       label: 'FSL Guide',
+                      tooltip: 'Open Filipino Sign Language gesture guide',
+                      semanticLabel: 'Open FSL gesture guide',
                       onPressed: _showGuide,
                       color: _kAppBlue,
                     ),
@@ -770,11 +1331,12 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
   Widget _buildRecognitionStatus() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final isReady = _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final message =
         _recognitionError ??
-        (_isModelReady
+        (isReady
             ? 'FSL sign recognition is active'
-            : 'FSL sign model is in training');
+            : 'Initializing FSL sign model...');
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
@@ -815,29 +1377,37 @@ class _SignToTextScreenState extends State<SignToTextScreen> {
               ),
               if (_cameraService.canSwitchCamera) ...[
                 const SizedBox(width: 8),
-                InkWell(
-                  onTap: _showCameraPicker,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _kAppBlue.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.cameraswitch_rounded, size: 14, color: _kAppBlue),
-                        SizedBox(width: 4),
-                        Text(
-                          'Switch',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: _kAppBlue,
+                Semantics(
+                  button: true,
+                  label: 'Switch between front and back camera',
+                  child: InkWell(
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      _showCameraPicker();
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _kAppBlue.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _kAppBlue.withValues(alpha: 0.3)),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.cameraswitch_rounded, size: 16, color: _kAppBlue),
+                          SizedBox(width: 6),
+                          Text(
+                            'Switch',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: _kAppBlue,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -936,44 +1506,59 @@ class _ActionButton extends StatelessWidget {
   final String label;
   final VoidCallback onPressed;
   final Color color;
+  final String? tooltip;
+  final String? semanticLabel;
 
   const _ActionButton({
     required this.icon,
     required this.label,
     required this.onPressed,
     required this.color,
+    this.tooltip,
+    this.semanticLabel,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Material(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(16),
-          child: InkWell(
-            onTap: onPressed,
+    return Semantics(
+      button: true,
+      label: semanticLabel ?? label,
+      tooltip: tooltip ?? label,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            color: color.withValues(alpha: 0.16),
             borderRadius: BorderRadius.circular(16),
-            child: Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: color.withValues(alpha: 0.4)),
-              ),
-              child: Center(
-                child: Icon(icon, color: color, size: 24),
+            child: InkWell(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                onPressed();
+              },
+              borderRadius: BorderRadius.circular(16),
+              child: Tooltip(
+                message: tooltip ?? label,
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: color.withValues(alpha: 0.5), width: 1.5),
+                  ),
+                  child: Center(
+                    child: Icon(icon, color: color, size: 26),
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11),
-        ),
-      ],
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+          ),
+        ],
+      ),
     );
   }
 }

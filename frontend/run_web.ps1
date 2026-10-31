@@ -5,7 +5,19 @@ $backendPath = Join-Path (Split-Path $frontendPath -Parent) 'backend'
 $backendRequirements = Join-Path $backendPath 'requirements.txt'
 $backendVenv = Join-Path $backendPath '.venv'
 $backendPython = Join-Path $backendVenv 'Scripts\python.exe'
+
 function Get-CompatiblePython {
+    $knownCandidates = @(
+        'C:\Users\Jebi\AppData\Local\Python\pythoncore-3.10-64\python.exe',
+        'C:\Python310\python.exe',
+        'C:\Python311\python.exe',
+        'C:\Python312\python.exe'
+    )
+    foreach ($cand in $knownCandidates) {
+        if (Test-Path -LiteralPath $cand) {
+            return $cand
+        }
+    }
     foreach ($ver in @('-3.10', '-3.11', '-3.12')) {
         try {
             $foundPath = (& py $ver -c "import sys; print(sys.executable)" 2>$null)
@@ -32,14 +44,14 @@ function Test-BackendDependencies {
         -Force -ErrorAction SilentlyContinue
     $checkProcess = Start-Process `
         -FilePath $backendPython `
-        -ArgumentList '-c', '"import cv2,edge_tts,fastapi,uvicorn,mediapipe as mp; mp.solutions.hands.Hands()"' `
+        -ArgumentList '-c', '"import cv2,edge_tts,fastapi,uvicorn,mediapipe,numpy"' `
         -WorkingDirectory $backendPath `
         -PassThru `
         -Wait `
         -NoNewWindow `
         -RedirectStandardOutput $dependencyCheckLog `
         -RedirectStandardError $dependencyCheckErrorLog
-    return $checkProcess.ExitCode -eq 0
+    return ($checkProcess.ExitCode -eq 0)
 }
 
 function Test-SpeechBackend {
@@ -47,10 +59,11 @@ function Test-SpeechBackend {
         $response = Invoke-WebRequest `
             -UseBasicParsing `
             -Uri 'http://127.0.0.1:5000/tts/health' `
-            -TimeoutSec 1
+            -TimeoutSec 1 `
+            -ErrorAction Stop
         return $response.StatusCode -eq 200
     }
-    catch [System.Net.WebException] {
+    catch {
         return $false
     }
 }
@@ -58,7 +71,7 @@ function Test-SpeechBackend {
 Push-Location $backendPath
 try {
     if (-not (Test-Path -LiteralPath $backendPython)) {
-        Write-Host 'Creating an isolated Python environment for the backend...'
+        Write-Host 'Creating an isolated Python environment for the backend...' -ForegroundColor Cyan
         Remove-Item -LiteralPath $dependencyInstallLog, $dependencyInstallErrorLog `
             -Force -ErrorAction SilentlyContinue
         $venvProcess = Start-Process `
@@ -82,7 +95,7 @@ try {
     }
 
     if (-not (Test-BackendDependencies)) {
-        Write-Host 'Installing backend packages required for camera and Filipino speech...'
+        Write-Host 'Installing backend packages required for camera and Filipino speech...' -ForegroundColor Cyan
         Remove-Item -LiteralPath $dependencyInstallLog, $dependencyInstallErrorLog `
             -Force -ErrorAction SilentlyContinue
         $installProcess = Start-Process `
@@ -113,6 +126,7 @@ try {
     }
 
     if (-not (Test-SpeechBackend)) {
+        Write-Host 'Starting TinigSenyas backend server on port 5000...' -ForegroundColor Cyan
         $backendProcess = Start-Process `
             -FilePath $backendPython `
             -ArgumentList 'server.py' `
@@ -142,11 +156,14 @@ try {
         if (-not $backendReady) {
             throw 'The speech backend did not become ready on port 5000.'
         }
+    } else {
+        Write-Host 'TinigSenyas backend is already running on port 5000.' -ForegroundColor Green
     }
 
     Push-Location $frontendPath
     try {
-        flutter run -d chrome
+        Write-Host 'Launching TinigSenyas web app on http://localhost:5001...' -ForegroundColor Cyan
+        flutter run -d chrome --web-port=5001
         if ($LASTEXITCODE -ne 0) {
             throw "Flutter exited with code $LASTEXITCODE."
         }

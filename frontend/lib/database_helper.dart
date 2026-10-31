@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   
@@ -16,7 +18,7 @@ class DatabaseHelper {
     };
 
     _mockConversations.insert(0, record);
-    print("SAVED TO MOCK DATABASE: $word");
+    debugPrint("SAVED TO MOCK DATABASE: $word");
     return record['convo_id'] as int;
   }
 

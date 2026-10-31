@@ -76,6 +76,12 @@ class CameraService {
     try {
       _cameras = await availableCameras();
     } catch (e) {
+      final err = e.toString();
+      if (err.contains('cameraNotReadable') || err.contains('NotReadableError')) {
+        throw CameraInUseException(
+          'The webcam is in use by another program (such as Zoom, Teams, Discord, another browser tab, or background script) or blocked by Windows settings.',
+        );
+      }
       throw CameraException('Failed to discover connected cameras: $e');
     }
 
@@ -86,31 +92,60 @@ class CameraService {
     }
 
     // 3. Select requested camera or best matching lens direction
+    CameraDescription? primaryCamera;
     if (specificCamera != null && _cameras.contains(specificCamera)) {
-      _selectedCamera = specificCamera;
+      primaryCamera = specificCamera;
     } else {
-      _selectedCamera = _cameras.firstWhere(
+      primaryCamera = _cameras.firstWhere(
         (cam) => cam.lensDirection == targetDirection,
         orElse: () => _cameras.first,
       );
     }
 
-    // 4. Initialize the camera controller with fallback strategies
-    await _initializeControllerWithFallback(_selectedCamera!);
-    _startFrameStream();
+    // Try primary camera first, then gracefully fall back to all other connected cameras
+    final camerasToTry = <CameraDescription>[
+      primaryCamera,
+      ..._cameras.where((c) => c != primaryCamera),
+    ];
+
+    Object? lastError;
+    for (final cam in camerasToTry) {
+      try {
+        await _initializeControllerWithFallback(cam);
+        _startFrameStream();
+        return;
+      } catch (e) {
+        lastError = e;
+        debugPrint('Camera init failed for "${cam.name}", trying next camera: $e');
+      }
+    }
+
+    final errStr = lastError.toString();
+    if (errStr.contains('cameraNotReadable') || errStr.contains('NotReadableError') || errStr.contains('hardware error')) {
+      throw CameraInUseException(
+        'The webcam is in use by another program (such as Zoom, Teams, Discord, another browser tab, or background script) or blocked by Windows settings.',
+      );
+    }
+    throw CameraException('Could not initialize any connected camera: $lastError');
   }
 
   Future<void> _initializeControllerWithFallback(CameraDescription camera) async {
     await _controller?.dispose();
+    _controller = null;
 
-    // Priority list of resolution presets for maximum camera compatibility
-    const resolutions = [
-      ResolutionPreset.high,
-      ResolutionPreset.medium,
-      ResolutionPreset.low,
-    ];
+    // Native resolution priority: Start with medium (640x480) for web compatibility
+    final resolutions = kIsWeb
+        ? const [
+            ResolutionPreset.medium,
+            ResolutionPreset.low,
+            ResolutionPreset.high,
+          ]
+        : const [
+            ResolutionPreset.high,
+            ResolutionPreset.medium,
+            ResolutionPreset.low,
+          ];
 
-    // Priority list of image format groups (YUV420 for mobile ML, null/default for web/desktop)
     final formatGroups = kIsWeb
         ? <ImageFormatGroup?>[null]
         : <ImageFormatGroup?>[ImageFormatGroup.yuv420, ImageFormatGroup.nv21, null];
@@ -119,8 +154,9 @@ class CameraService {
 
     for (final format in formatGroups) {
       for (final resolution in resolutions) {
+        CameraController? controller;
         try {
-          final controller = CameraController(
+          controller = CameraController(
             camera,
             resolution,
             enableAudio: false,
@@ -133,7 +169,8 @@ class CameraService {
           return;
         } catch (e) {
           lastError = e;
-          debugPrint('Camera init fallback (Resolution: $resolution, Format: $format): $e');
+          await controller?.dispose();
+          debugPrint('Camera init fallback (Camera: ${camera.name}, Resolution: $resolution): $e');
         }
       }
     }
@@ -231,4 +268,8 @@ class CameraPermissionPermanentlyDeniedException extends CameraException {
 
 class NoCameraAvailableException extends CameraException {
   NoCameraAvailableException(super.message);
+}
+
+class CameraInUseException extends CameraException {
+  CameraInUseException(super.message);
 }

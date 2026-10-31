@@ -51,3 +51,6 @@ flutter:
     - assets/images/
     - assets/model/version.txt
     - assets/model/manifest.json
+    - assets/model/labels.txt
+    - assets/model/fsl_model.tflite
+    - assets/model/fsl_alphabet.tflite

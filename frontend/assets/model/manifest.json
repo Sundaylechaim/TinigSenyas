@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0-mock",
-  "url": "",
-  "sha256": "",
+  "version": "1.0.1",
+  "url": "assets/model/fsl_model.tflite",
+  "sha256": "st_gcn_103_classes",
   "min_app_version": "1.0.0"
 }

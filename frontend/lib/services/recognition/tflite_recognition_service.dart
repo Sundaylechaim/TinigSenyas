@@ -9,7 +9,7 @@ class TfliteRecognitionService implements RecognitionService {
   bool _isRunning = false;
 
   @override
-  bool get isModelReady => false;
+  bool get isModelReady => _isInitialized;
 
   @override
   Future<void> initialize() async {
