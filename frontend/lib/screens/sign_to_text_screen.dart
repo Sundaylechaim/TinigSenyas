@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:dio/dio.dart';
 import 'package:provider/provider.dart';
 import 'package:camera/camera.dart';
 import '../providers/recognition_provider.dart';
@@ -11,10 +12,10 @@ import '../services/tts_service.dart';
 import '../services/database_helper.dart';
 import '../models/sign_result.dart';
 import '../widgets/camera_preview.dart';
-import '../widgets/prediction_overlay.dart';
 import '../widgets/signing_space_overlay.dart';
 import '../widgets/connectivity_badge.dart';
 import '../services/word_prediction_service.dart';
+import '../services/settings_service.dart';
 
 const Color _kAppBlue = Color(0xFF0138FF);
 const Color _kAppYellow = Color(0xFFFFC801);
@@ -39,8 +40,11 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   String? _cameraError;
   String? _recognitionError;
   bool _useBackendFeed = kIsWeb;
+  bool _backendFeedError = false;
+  bool _isPaused = false;
   RecognitionProvider? _recognitionProvider;
   StreamSubscription<SignResult>? _predictionSubscription;
+  StreamSubscription<bool>? _pauseSubscription;
   StreamSubscription<CameraImage>? _frameSubscription;
 
   // Smart Word Assembler & Intent Prediction State
@@ -73,18 +77,67 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       }
     });
 
+    _pauseSubscription = _recognitionProvider?.pauseStatus?.listen((paused) {
+      if (mounted && _isPaused != paused) {
+        if (paused) {
+          // Tactile haptic pulse to notify signer that Open Palm pause & buffer flush triggered
+          HapticFeedback.heavyImpact();
+        }
+        setState(() {
+          _isPaused = paused;
+          if (paused) {
+            _currentPrediction = null;
+          }
+        });
+      }
+    });
+
     if (kIsWeb) {
-      _useBackendFeed = true;
-      _isCheckingPermission = false;
-      _hasPermission = true;
-      _isCameraInitialized = true;
-      _isModelReady = true;
+      _detectWebFeedMode();
+    } else {
+      _useBackendFeed = false;
+      _checkPermissionAndStart();
+    }
+  }
+
+  Future<void> _detectWebFeedMode() async {
+    setState(() => _isCheckingPermission = true);
+    bool backendAvailable = false;
+    try {
+      final dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(milliseconds: 1200),
+          receiveTimeout: const Duration(milliseconds: 1200),
+        ),
+      );
+      final serverUrl = context.read<SettingsService>().ttsServerUrl;
+      final res = await dio.get('$serverUrl/tts/health');
+      backendAvailable = res.statusCode == 200;
+    } catch (_) {
+      backendAvailable = false;
+    }
+
+    if (!mounted) return;
+
+    if (backendAvailable) {
+      setState(() {
+        _useBackendFeed = true;
+        _backendFeedError = false;
+        _isCheckingPermission = false;
+        _hasPermission = true;
+        _isCameraInitialized = true;
+        _isModelReady = true;
+      });
       _recognitionProvider?.initialize().then((_) {
         _recognitionProvider?.start();
         if (mounted) setState(() => _isModelReady = true);
       });
     } else {
-      _useBackendFeed = false;
+      // Backend server is not running on port 5000 -> seamlessly fall back to browser camera
+      setState(() {
+        _useBackendFeed = false;
+        _backendFeedError = false;
+      });
       _checkPermissionAndStart();
     }
   }
@@ -92,7 +145,6 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (kIsWeb) return;
-    if (!_hasPermission) return;
 
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
       _cameraService.dispose();
@@ -101,31 +153,68 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       }
     } else if (state == AppLifecycleState.resumed) {
       if (!_useBackendFeed) {
-        _initializeCamera();
+        // Re-check permission and restart camera when returning from settings or background
+        _checkPermissionAndStart();
       }
     }
   }
 
   Future<void> _checkPermissionAndStart() async {
-    setState(() => _isCheckingPermission = true);
+    if (!mounted) return;
+    setState(() {
+      _isCheckingPermission = true;
+      _cameraError = null;
+    });
+
+    // 1. Check whether camera permission is already granted
     final hasPerm = await _cameraService.hasCameraPermission();
+    if (hasPerm) {
+      if (mounted) {
+        setState(() {
+          _hasPermission = true;
+          _isPermanentlyDenied = false;
+          _isCheckingPermission = false;
+        });
+      }
+      await _initializeCamera();
+      return;
+    }
+
+    // 2. If already permanently denied, guide user to system settings
     final isPermDenied = await _cameraService.isPermissionPermanentlyDenied();
+    if (isPermDenied) {
+      if (mounted) {
+        setState(() {
+          _hasPermission = false;
+          _isPermanentlyDenied = true;
+          _isCheckingPermission = false;
+        });
+      }
+      return;
+    }
+
+    // 3. Always ask for camera permission before starting the camera
+    final granted = await _cameraService.requestCameraPermission();
+    final nowPermDenied = await _cameraService.isPermissionPermanentlyDenied();
 
     if (mounted) {
       setState(() {
-        _hasPermission = hasPerm;
-        _isPermanentlyDenied = isPermDenied;
+        _hasPermission = granted;
+        _isPermanentlyDenied = nowPermDenied;
         _isCheckingPermission = false;
       });
     }
 
-    if (hasPerm) {
+    if (granted) {
       await _initializeCamera();
     }
   }
 
   Future<void> _requestPermissionAndStart() async {
-    setState(() => _cameraError = null);
+    setState(() {
+      _cameraError = null;
+      _isCheckingPermission = true;
+    });
     final granted = await _cameraService.requestCameraPermission();
     final isPermDenied = await _cameraService.isPermissionPermanentlyDenied();
 
@@ -133,6 +222,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       setState(() {
         _hasPermission = granted;
         _isPermanentlyDenied = isPermDenied;
+        _isCheckingPermission = false;
       });
     }
 
@@ -142,6 +232,23 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   }
 
   Future<void> _initializeCamera() async {
+    // Guard: Guarantee camera permission is granted before touching hardware
+    final hasPerm = await _cameraService.hasCameraPermission();
+    if (!hasPerm) {
+      final granted = await _cameraService.requestCameraPermission();
+      if (!granted) {
+        final isDenied = await _cameraService.isPermissionPermanentlyDenied();
+        if (mounted) {
+          setState(() {
+            _hasPermission = false;
+            _isPermanentlyDenied = isDenied;
+            _isCameraInitialized = false;
+          });
+        }
+        return;
+      }
+    }
+
     try {
       await _cameraService.initialize(direction: CameraLensDirection.front);
       await _recognitionProvider!.initialize();
@@ -321,6 +428,18 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
 
   Future<void> _saveCurrentPrediction() async {
     if (_currentPrediction != null) {
+      final settings = context.read<SettingsService>();
+      if (!settings.saveHistoryEnabled) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Private Mode active: sign is not saved to history.'),
+              duration: Duration(milliseconds: 1200),
+            ),
+          );
+        }
+        return;
+      }
       try {
         await DatabaseHelper.instance.saveRecognizedGesture(
           _currentPrediction!.label,
@@ -346,6 +465,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   }
 
   void _handlePredictionAssembly(SignResult prediction) {
+    if (_isPaused) return;
     final label = prediction.label.trim();
     // Check if the prediction is a single letter (A-Z or Ñ)
     final isSingleLetter = label.length == 1 &&
@@ -441,6 +561,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _predictionSubscription?.cancel();
+    _pauseSubscription?.cancel();
     _frameSubscription?.cancel();
     _cameraService.dispose();
     final recognitionProvider = _recognitionProvider;
@@ -502,23 +623,31 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
           ],
         ),
         actions: [
-          IconButton(
-            icon: Icon(_useBackendFeed ? Icons.sensors_rounded : Icons.videocam_rounded),
-            tooltip: _useBackendFeed ? 'Switch to Browser Direct Camera' : 'Switch to Backend AI Video Stream',
-            onPressed: () {
-              setState(() {
-                _useBackendFeed = !_useBackendFeed;
-                if (!_useBackendFeed && !_isCameraInitialized) {
-                  _checkPermissionAndStart();
-                }
-              });
-            },
-          ),
+          if (kIsWeb)
+            IconButton(
+              icon: Icon(
+                _useBackendFeed ? Icons.sensors_rounded : Icons.videocam_rounded,
+                color: _kAppBlue,
+              ),
+              tooltip: _useBackendFeed ? 'Switch to Browser Direct Camera' : 'Switch to Backend AI Video Stream',
+              onPressed: () {
+                setState(() {
+                  _useBackendFeed = !_useBackendFeed;
+                  _backendFeedError = false;
+                  if (!_useBackendFeed && !_isCameraInitialized) {
+                    _checkPermissionAndStart();
+                  }
+                });
+              },
+            ),
           if (!_useBackendFeed && _isCameraInitialized && _cameraService.canSwitchCamera)
             IconButton(
               icon: const Icon(Icons.cameraswitch_rounded),
-              tooltip: 'Switch Camera',
-              onPressed: _showCameraPicker,
+              tooltip: 'Switch between front and back camera',
+              onPressed: () {
+                HapticFeedback.selectionClick();
+                _showCameraPicker();
+              },
             ),
           const ConnectivityBadge(),
           const SizedBox(width: 14),
@@ -556,140 +685,154 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: Container(
-              padding: const EdgeInsets.all(28),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? const Color(0xFF0C1220).withValues(alpha: 0.85)
-                    : Colors.white.withValues(alpha: 0.90),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
+    return SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: Container(
+                padding: const EdgeInsets.all(28),
+                decoration: BoxDecoration(
                   color: isDark
-                      ? Colors.white.withValues(alpha: 0.16)
-                      : Colors.white.withValues(alpha: 0.80),
-                  width: 1.5,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.15),
-                    blurRadius: 20,
-                    offset: const Offset(0, 6),
+                      ? const Color(0xFF0C1220).withValues(alpha: 0.85)
+                      : Colors.white.withValues(alpha: 0.90),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.16)
+                        : Colors.white.withValues(alpha: 0.80),
+                    width: 1.5,
                   ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 76,
-                    height: 76,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _kAppBlue.withValues(alpha: 0.12),
-                      border: Border.all(
-                        color: _kAppBlue.withValues(alpha: 0.4),
-                        width: 2,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.15),
+                      blurRadius: 20,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 76,
+                      height: 76,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _kAppBlue.withValues(alpha: 0.12),
+                        border: Border.all(
+                          color: _kAppBlue.withValues(alpha: 0.4),
+                          width: 2,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.videocam_rounded,
+                        size: 40,
+                        color: _kAppBlue,
                       ),
                     ),
-                    child: const Icon(
-                      Icons.videocam_rounded,
-                      size: 40,
-                      color: _kAppBlue,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    'Camera Access Required',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'TinigSenyas needs your camera permission to recognize hand gestures from left to right and translate Filipino Sign Language (FSL) in real-time.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 22),
-                  _buildFeatureBullet(
-                    Icons.pan_tool_rounded,
-                    'Recognizes both hands across horizontal signing space',
-                  ),
-                  const SizedBox(height: 10),
-                  _buildFeatureBullet(
-                    Icons.cameraswitch_rounded,
-                    'Compatible with all cameras: Front, Back & USB Webcams',
-                  ),
-                  const SizedBox(height: 10),
-                  _buildFeatureBullet(
-                    Icons.lock_outline_rounded,
-                    'Private: Frames are processed locally on your device',
-                  ),
-                  const SizedBox(height: 28),
-                  if (_isPermanentlyDenied) ...[
+                    const SizedBox(height: 20),
                     Text(
-                      'Camera permission is permanently denied in system settings.',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.error,
-                        fontWeight: FontWeight.w600,
+                      'Camera Access Required',
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.5,
                       ),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 12),
-                    ElevatedButton.icon(
-                      onPressed: () async => await _cameraService.openSettings(),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _kAppBlue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        elevation: 2,
+                    Text(
+                      'TinigSenyas requires camera access to recognize hand gestures and translate Filipino Sign Language (FSL) in real-time.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                        height: 1.5,
                       ),
-                      icon: const Icon(Icons.settings_rounded),
-                      label: const Text(
-                        'Open App Settings',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 22),
+                    _buildFeatureBullet(
+                      Icons.pan_tool_rounded,
+                      'Recognizes hand gestures across horizontal signing space',
                     ),
                     const SizedBox(height: 10),
-                    TextButton(
-                      onPressed: _checkPermissionAndStart,
-                      child: const Text('I have allowed permission (Check again)'),
+                    _buildFeatureBullet(
+                      Icons.cameraswitch_rounded,
+                      'Supports both Front (Selfie) and Rear mobile cameras',
                     ),
-                  ] else ...[
-                    ElevatedButton.icon(
-                      onPressed: _requestPermissionAndStart,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _kAppBlue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+                    const SizedBox(height: 10),
+                    _buildFeatureBullet(
+                      Icons.lock_outline_rounded,
+                      'Private: Video is processed locally on your phone',
+                    ),
+                    const SizedBox(height: 28),
+                    if (_isPermanentlyDenied) ...[
+                      Text(
+                        'Camera permission is denied in system settings.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                          fontWeight: FontWeight.w600,
                         ),
-                        elevation: 2,
+                        textAlign: TextAlign.center,
                       ),
-                      icon: const Icon(Icons.check_circle_outline_rounded),
-                      label: const Text(
-                        'Allow Camera Access',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                      const SizedBox(height: 14),
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          HapticFeedback.mediumImpact();
+                          await _cameraService.openSettings();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _kAppBlue,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(double.infinity, 50),
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          elevation: 2,
+                        ),
+                        icon: const Icon(Icons.settings_rounded),
+                        label: const Text(
+                          'Open App Settings',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 10),
+                      TextButton(
+                        onPressed: () {
+                          HapticFeedback.lightImpact();
+                          _checkPermissionAndStart();
+                        },
+                        child: const Text('I have allowed permission (Check again)'),
+                      ),
+                    ] else ...[
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          HapticFeedback.mediumImpact();
+                          _requestPermissionAndStart();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _kAppBlue,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(double.infinity, 50),
+                          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          elevation: 2,
+                        ),
+                        icon: const Icon(Icons.check_circle_outline_rounded),
+                        label: const Text(
+                          'Allow Camera Access',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -730,143 +873,158 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
             _cameraError!.toLowerCase().contains('in use') ||
             _cameraError!.toLowerCase().contains('hardware error'));
 
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: Container(
-              padding: const EdgeInsets.all(26),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? const Color(0xFF0C1220).withValues(alpha: 0.85)
-                    : Colors.white.withValues(alpha: 0.90),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: isDark ? Colors.white12 : Colors.black12,
+    return SafeArea(
+      child: Center(
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.all(24),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: Container(
+                padding: const EdgeInsets.all(26),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF0C1220).withValues(alpha: 0.85)
+                      : Colors.white.withValues(alpha: 0.90),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: isDark ? Colors.white12 : Colors.black12,
+                  ),
                 ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 70,
-                    height: 70,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: (isInUseIssue ? Colors.orange : theme.colorScheme.error)
-                          .withValues(alpha: 0.12),
-                    ),
-                    child: Icon(
-                      isInUseIssue
-                          ? Icons.videocam_off_rounded
-                          : Icons.error_outline_rounded,
-                      size: 38,
-                      color: isInUseIssue ? Colors.orange : theme.colorScheme.error,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    isInUseIssue
-                        ? 'Camera Locked or In Use'
-                        : isPermIssue
-                            ? 'Camera Permission Issue'
-                            : 'Camera Error',
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    isInUseIssue
-                        ? 'Your webcam is currently locked by another application or browser tab. Windows only allows one app to access the camera at a time.'
-                        : (_cameraError ?? 'Unable to connect to camera.'),
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                      height: 1.4,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  if (isInUseIssue) ...[
-                    const SizedBox(height: 18),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
                     Container(
-                      padding: const EdgeInsets.all(14),
+                      width: 70,
+                      height: 70,
                       decoration: BoxDecoration(
-                        color: isDark
-                            ? Colors.black.withValues(alpha: 0.3)
-                            : const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05),
-                        ),
+                        shape: BoxShape.circle,
+                        color: (isInUseIssue ? Colors.orange : theme.colorScheme.error)
+                            .withValues(alpha: 0.12),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Quick Troubleshooting Steps:',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                          const SizedBox(height: 8),
-                          _buildTroubleshootItem('1. Close other apps using your webcam (Zoom, Teams, Discord, OBS, or Camera app).'),
-                          _buildTroubleshootItem('2. Check if another browser tab or window has camera access enabled.'),
-                          _buildTroubleshootItem('3. If you ran a Python test script (validate_hand_tracking.py), press Q or close its terminal.'),
-                          _buildTroubleshootItem('4. In Windows Settings > Privacy & security > Camera, ensure Chrome has camera access allowed.'),
-                        ],
+                      child: Icon(
+                        isInUseIssue
+                            ? Icons.videocam_off_rounded
+                            : Icons.error_outline_rounded,
+                        size: 38,
+                        color: isInUseIssue ? Colors.orange : theme.colorScheme.error,
                       ),
                     ),
-                  ],
-                  const SizedBox(height: 24),
-                  if (isPermIssue) ...[
-                    ElevatedButton.icon(
-                      onPressed: () async => await _cameraService.openSettings(),
-                      icon: const Icon(Icons.settings_rounded),
-                      label: const Text('Open System Settings'),
+                    const SizedBox(height: 18),
+                    Text(
+                      isInUseIssue
+                          ? 'Camera In Use or Unavailable'
+                          : isPermIssue
+                              ? 'Camera Permission Issue'
+                              : 'Camera Error',
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 10),
+                    Text(
+                      isInUseIssue
+                          ? 'The camera is currently locked by another application or blocked by system settings.'
+                          : (_cameraError ?? 'Unable to connect to camera.'),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                        height: 1.4,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    if (isInUseIssue) ...[
+                      const SizedBox(height: 18),
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? Colors.black.withValues(alpha: 0.3)
+                              : const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Troubleshooting Steps:',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                            const SizedBox(height: 8),
+                            _buildTroubleshootItem('1. Close other background apps using the camera (video calls, camera app).'),
+                            _buildTroubleshootItem('2. Verify Camera permission is enabled for TinigSenyas in device Settings.'),
+                            _buildTroubleshootItem('3. If the camera remains unresponsive, restart TinigSenyas.'),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    if (isPermIssue) ...[
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          HapticFeedback.mediumImpact();
+                          await _cameraService.openSettings();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 48),
+                        ),
+                        icon: const Icon(Icons.settings_rounded),
+                        label: const Text('Open System Settings'),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        HapticFeedback.lightImpact();
+                        _checkPermissionAndStart();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kAppBlue,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(double.infinity, 48),
+                        padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text(
+                        'Retry Camera',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    if (kIsWeb) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _cameraError = null;
+                            _useBackendFeed = true;
+                          });
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _kAppBlue,
+                          side: const BorderSide(color: _kAppBlue, width: 1.5),
+                          minimumSize: const Size(double.infinity, 48),
+                          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        icon: const Icon(Icons.videocam_rounded),
+                        label: const Text(
+                          'Use Backend AI Video Stream',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
                   ],
-                  ElevatedButton.icon(
-                    onPressed: _initializeCamera,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _kAppBlue,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 13),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: const Text(
-                      'Retry Camera',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _cameraError = null;
-                        _useBackendFeed = true;
-                      });
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _kAppBlue,
-                      side: const BorderSide(color: _kAppBlue, width: 1.5),
-                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    icon: const Icon(Icons.videocam_rounded),
-                    label: const Text(
-                      'Use Backend AI Video Stream',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -874,26 +1032,129 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       ),
     );
   }
-
   Widget _buildBackendFeedView() {
+    final mediaQuery = MediaQuery.of(context);
+    final topPadding = mediaQuery.padding.top + kToolbarHeight + 8;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (kIsWeb)
-          HtmlElementView.fromTagName(
-            tagName: 'img',
-            onElementCreated: (Object element) {
-              final img = element as dynamic;
-              img.src = 'http://127.0.0.1:5000/video_feed';
-              img.style.width = '100%';
-              img.style.height = '100%';
-              img.style.objectFit = 'cover';
-              img.style.pointerEvents = 'none';
-            },
+        if (_backendFeedError)
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                  child: Container(
+                    padding: const EdgeInsets.all(28),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xFF0C1220).withValues(alpha: 0.90)
+                          : Colors.white.withValues(alpha: 0.95),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: Colors.orange.withValues(alpha: 0.4),
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.orange.withValues(alpha: 0.15),
+                          ),
+                          child: const Icon(Icons.sensors_off_rounded, color: Colors.orange, size: 34),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Backend AI Server Offline',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'The Python server (server.py) is not running on port 5000. You can switch to your direct browser webcam right now, or launch run_web.ps1.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                            height: 1.4,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 22),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _useBackendFeed = false;
+                              _backendFeedError = false;
+                            });
+                            _checkPermissionAndStart();
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _kAppBlue,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(double.infinity, 48),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          icon: const Icon(Icons.videocam_rounded),
+                          label: const Text(
+                            'Switch to Browser Direct Camera',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextButton.icon(
+                          onPressed: () {
+                            setState(() => _backendFeedError = false);
+                            _detectWebFeedMode();
+                          },
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('Retry Backend (Port 5000)'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          )
+        else if (kIsWeb)
+          Positioned.fill(
+            child: HtmlElementView.fromTagName(
+              tagName: 'img',
+              onElementCreated: (Object element) {
+                final img = element as dynamic;
+                final serverUrl = context.read<SettingsService>().ttsServerUrl;
+                img.src = '$serverUrl/video_feed';
+                img.style.position = 'absolute';
+                img.style.top = '0';
+                img.style.left = '0';
+                img.style.width = '100%';
+                img.style.height = '100%';
+                img.style.objectFit = 'cover';
+                img.style.display = 'block';
+                img.style.pointerEvents = 'none';
+                img.onerror = (dynamic _) {
+                  if (mounted && _useBackendFeed) {
+                    setState(() => _backendFeedError = true);
+                  }
+                };
+              },
+            ),
           )
         else
           Image.network(
-            'http://127.0.0.1:5000/video_feed',
+            '${context.read<SettingsService>().ttsServerUrl}/video_feed',
             fit: BoxFit.cover,
             gaplessPlayback: true,
             errorBuilder: (context, error, stackTrace) => Center(
@@ -914,7 +1175,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
           ),
         const SigningSpaceOverlay(),
         Positioned(
-          top: 100,
+          top: topPadding,
           left: 16,
           right: 16,
           child: _buildRecognitionStatus(),
@@ -923,15 +1184,19 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
           bottom: 0,
           left: 0,
           right: 0,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-            child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildFingerspellingWordAssembler(),
-              _buildActionCard(),
-            ],
-          ),
+          child: SafeArea(
+            top: false,
+            bottom: true,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildFingerspellingWordAssembler(),
+                  _buildActionCard(),
+                ],
+              ),
+            ),
           ),
         ),
       ],
@@ -949,16 +1214,18 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   }
 
   Widget _buildCameraView() {
+    final mediaQuery = MediaQuery.of(context);
+    final topPadding = mediaQuery.padding.top + kToolbarHeight + 8;
+
     return Stack(
       fit: StackFit.expand,
       children: [
         CameraPreviewWidget(
           cameraService: _cameraService,
-          overlay: PredictionOverlay(prediction: _currentPrediction, top: 72),
         ),
         const SigningSpaceOverlay(),
         Positioned(
-          top: 100,
+          top: topPadding,
           left: 16,
           right: 16,
           child: _buildRecognitionStatus(),
@@ -967,15 +1234,19 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
           bottom: 0,
           left: 0,
           right: 0,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-            child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildFingerspellingWordAssembler(),
-              _buildActionCard(),
-            ],
-          ),
+          child: SafeArea(
+            top: false,
+            bottom: true,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildFingerspellingWordAssembler(),
+                  _buildActionCard(),
+                ],
+              ),
+            ),
           ),
         ),
       ],
@@ -1137,7 +1408,8 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   Widget _buildActionCard() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final hasPrediction = _currentPrediction != null;
+    final isPaused = _isPaused;
+    final hasPrediction = _currentPrediction != null && !isPaused;
     final isReady = _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final confidence = _currentPrediction?.confidence ?? 0.0;
     final isConfidenceHigh = confidence >= 0.70;
@@ -1154,9 +1426,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                 : Colors.white.withValues(alpha: 0.95),
             borderRadius: BorderRadius.circular(24),
             border: Border.all(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.20)
-                  : Colors.white,
+              color: isPaused
+                  ? const Color(0xFFFFC801).withValues(alpha: 0.5)
+                  : (isDark ? Colors.white.withValues(alpha: 0.20) : Colors.white),
               width: 1.5,
             ),
             boxShadow: [
@@ -1175,20 +1447,26 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: hasPrediction
-                          ? (isConfidenceHigh
-                              ? const Color(0xFF10B981).withValues(alpha: 0.18)
-                              : _kAppBlue.withValues(alpha: 0.15))
-                          : Colors.grey.withValues(alpha: 0.12),
+                      color: isPaused
+                          ? const Color(0xFFD97706).withValues(alpha: 0.18)
+                          : hasPrediction
+                              ? (isConfidenceHigh
+                                  ? const Color(0xFF10B981).withValues(alpha: 0.18)
+                                  : _kAppBlue.withValues(alpha: 0.15))
+                              : Colors.grey.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      hasPrediction
-                          ? (isConfidenceHigh ? Icons.verified_rounded : Icons.check_circle_rounded)
-                          : Icons.radar_rounded,
-                      color: hasPrediction
-                          ? (isConfidenceHigh ? const Color(0xFF10B981) : _kAppBlue)
-                          : Colors.grey,
+                      isPaused
+                          ? Icons.pause_circle_filled_rounded
+                          : hasPrediction
+                              ? (isConfidenceHigh ? Icons.verified_rounded : Icons.check_circle_rounded)
+                              : Icons.radar_rounded,
+                      color: isPaused
+                          ? const Color(0xFFD97706)
+                          : hasPrediction
+                              ? (isConfidenceHigh ? const Color(0xFF10B981) : _kAppBlue)
+                              : Colors.grey,
                       size: 26,
                     ),
                   ),
@@ -1196,29 +1474,44 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                   Expanded(
                     child: Semantics(
                       liveRegion: true,
-                      label: hasPrediction
-                          ? 'Recognized Filipino sign: ${_currentPrediction!.label}, confidence ${(confidence * 100).toInt()} percent'
-                          : isReady
-                              ? 'Camera ready. Position hand gestures in frame to sign.'
-                              : 'Initializing sign recognition model.',
+                      label: isPaused
+                          ? 'Sign recognition paused. Open palm detected. Lower hand to sign next word.'
+                          : hasPrediction
+                              ? 'Recognized Filipino sign: ${_currentPrediction!.label}, confidence ${(confidence * 100).toInt()} percent'
+                              : isReady
+                                  ? 'Camera ready. Position hand gestures in frame to sign.'
+                                  : 'Initializing sign recognition model.',
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            hasPrediction
-                                ? _currentPrediction!.label
-                                : isReady
-                                    ? 'Position hands to sign...'
-                                    : 'Initializing FSL model...',
+                            isPaused
+                                ? '⏸️ Paused (Open Palm)'
+                                : hasPrediction
+                                    ? _currentPrediction!.label
+                                    : isReady
+                                        ? 'Position hands to sign...'
+                                        : 'Initializing FSL model...',
                             style: TextStyle(
-                              fontSize: hasPrediction ? 22 : 15,
+                              fontSize: (isPaused || hasPrediction) ? 20 : 15,
                               fontWeight: FontWeight.w900,
-                              letterSpacing: hasPrediction ? 0.4 : 0.0,
-                              color: isDark ? Colors.white : const Color(0xFF0F172A),
+                              letterSpacing: (isPaused || hasPrediction) ? 0.4 : 0.0,
+                              color: isPaused
+                                  ? const Color(0xFFD97706)
+                                  : (isDark ? Colors.white : const Color(0xFF0F172A)),
                             ),
                           ),
-                          if (hasPrediction)
+                          if (isPaused)
+                            Text(
+                              'Buffer flushed • Ready for next sign',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                              ),
+                            )
+                          else if (hasPrediction)
                             Text(
                               'Filipino Sign Language',
                               style: TextStyle(
@@ -1231,7 +1524,38 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       ),
                     ),
                   ),
-                  if (hasPrediction && isReady)
+                  if (isPaused)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD97706),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFD97706).withValues(alpha: 0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.pause_rounded, size: 14, color: Colors.white),
+                          SizedBox(width: 4),
+                          Text(
+                            'PAUSED',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                              color: Colors.white,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else if (hasPrediction && isReady)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
@@ -1332,11 +1656,13 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final isReady = _isModelReady || (_recognitionProvider?.isModelReady ?? false);
-    final message =
-        _recognitionError ??
-        (isReady
-            ? 'FSL sign recognition is active'
-            : 'Initializing FSL sign model...');
+    final isPaused = _isPaused;
+    final message = _recognitionError ??
+        (isPaused
+            ? '⏸️ Reader Paused (Open Palm) — Lower hand to sign next word'
+            : isReady
+                ? 'FSL sign recognition is active'
+                : 'Initializing FSL sign model...');
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
@@ -1345,21 +1671,27 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-            color: _recognitionError == null
-                ? (isDark ? const Color(0xFF0C1220).withValues(alpha: 0.75) : Colors.white.withValues(alpha: 0.85))
-                : Colors.redAccent.withValues(alpha: 0.85),
+            color: _recognitionError != null
+                ? Colors.redAccent.withValues(alpha: 0.85)
+                : isPaused
+                    ? const Color(0xFFD97706).withValues(alpha: 0.90)
+                    : (isDark ? const Color(0xFF0C1220).withValues(alpha: 0.75) : Colors.white.withValues(alpha: 0.85)),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: isDark ? Colors.white12 : Colors.white60,
+              color: isPaused
+                  ? const Color(0xFFFFC801).withValues(alpha: 0.6)
+                  : (isDark ? Colors.white12 : Colors.white60),
             ),
           ),
           child: Row(
             children: [
               Icon(
-                _recognitionError == null
-                    ? Icons.videocam_rounded
-                    : Icons.error_outline_rounded,
-                color: _recognitionError == null ? _kAppBlue : Colors.white,
+                _recognitionError != null
+                    ? Icons.error_outline_rounded
+                    : isPaused
+                        ? Icons.pause_circle_rounded
+                        : Icons.videocam_rounded,
+                color: (_recognitionError != null || isPaused) ? Colors.white : _kAppBlue,
                 size: 20,
               ),
               const SizedBox(width: 10),
@@ -1369,9 +1701,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 12,
-                    color: _recognitionError == null
-                        ? (isDark ? Colors.white : const Color(0xFF0F172A))
-                        : Colors.white,
+                    color: (_recognitionError != null || isPaused)
+                        ? Colors.white
+                        : (isDark ? Colors.white : const Color(0xFF0F172A)),
                   ),
                 ),
               ),

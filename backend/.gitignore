@@ -1,2 +1,20 @@
+# Python Virtual Environments & Caches
 .venv/
+venv/
 __pycache__/
+*.pyc
+
+# Environment Variables & Secrets (CRITICAL: Never commit to Git)
+.env
+.env.*
+*.env
+*.key
+*.pem
+secrets/
+credentials*.json
+
+# User Data & Suppression Lists (Personal Data Protection / RA 10173)
+email_suppression_list.json
+*.sqlite
+*.sqlite3
+*.db

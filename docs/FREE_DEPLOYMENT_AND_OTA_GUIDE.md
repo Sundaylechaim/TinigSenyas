@@ -137,8 +137,29 @@ When you add new UI screens or major features:
 ## 5. Quick Build Scripts
 
 A helper script has been placed in `frontend/build_android_apk.ps1`.  
-Whenever you want to build a new release to upload to Drive, simply right-click it and select **Run with PowerShell** (or run `.\build_android_apk.ps1` from `frontend`). It will:
-1. Run `flutter clean` & `flutter pub get`.
-2. Compile the release APK.
-3. Automatically open File Explorer pointing directly to the generated APK!
+Whenever you want to build a local Android release, simply right-click it and select **Run with PowerShell** (or run `.\build_android_apk.ps1` from `frontend`). It will compile the release APK and locate the file.
+
+---
+
+## 6. Unified Cloud CI/CD Release (Android + iOS Together)
+
+Instead of building manually on local machines, the project now includes a **Unified GitHub Actions Pipeline** (`.github/workflows/unified-release.yml`) and **One-Click Trigger Script** (`trigger_release.ps1`).
+
+### How to Trigger Both Builds:
+Run from the root of `TinigSenyas`:
+```powershell
+.\trigger_release.ps1
+```
+
+This runs GitHub Actions runners in parallel:
+- **Android Runner**: Compiles `TinigSenyas-Android.apk`.
+- **macOS Runner (unmac)**: Compiles `TinigSenyas-iOS.ipa` and `TinigSenyas-iOS-Simulator.zip`.
+- **Unified Release Publisher**: Combines both platforms into a single GitHub Release.
+
+### Unified Download Page:
+A device-detecting download portal is available at `docs/index.html`. When opened on any smartphone:
+- **Android phones:** Automatically detects Android and highlights the APK download.
+- **iPhones:** Automatically detects iOS and provides the IPA + Sideloadly / Web Simulator links.
+- **Desktop:** Allows testers to toggle between Android and iOS.
+
 

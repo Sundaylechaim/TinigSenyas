@@ -83,7 +83,7 @@ class ModelUpdater {
       final bundled = await rootBundle.loadString(_versionAsset);
       return bundled.trim();
     } catch (_) {
-      return '1.0.0-mock';
+      return '1.0.0';
     }
   }
 
@@ -156,14 +156,10 @@ class ModelUpdater {
   /// Downloads and verifies the new model file
   Stream<ModelUpdateInfo> downloadUpdate(ModelUpdateInfo info) async* {
     if (info.url.isEmpty) {
-      // Simulate/mock progress if no URL provided yet
-      for (int i = 0; i <= 100; i += 20) {
-        await Future.delayed(const Duration(milliseconds: 200));
-        yield info.copyWith(status: UpdateStatus.downloading, progress: i / 100);
-      }
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsKey, info.version);
-      yield info.copyWith(status: UpdateStatus.upToDate, progress: 1.0);
+      yield info.copyWith(
+        status: UpdateStatus.error,
+        errorMessage: 'Download URL is empty.',
+      );
       return;
     }
 

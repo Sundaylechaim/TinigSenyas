@@ -13,6 +13,8 @@ import '../widgets/connectivity_badge.dart';
 import 'landing_page_screen.dart';
 import '../services/model_updater.dart';
 import '../widgets/model_update_dialog.dart';
+import 'privacy_policy_screen.dart';
+import 'dmca_policy_screen.dart';
 
 
 const Color _kAppBlue = Color(0xFF0138FF);
@@ -576,7 +578,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 24),
           // Data Section
-          _SectionHeader('Data'),
+          _SectionHeader('Data & Privacy (CIPA / GDPR)'),
+          _SettingsTile(
+            title: 'Save History (Private Mode)',
+            subtitle: _settingsService.saveHistoryEnabled
+                ? 'Conversation history is stored in local database'
+                : 'Private Mode active: translations are not saved to database',
+            trailing: Switch(
+              value: _settingsService.saveHistoryEnabled,
+              onChanged: (val) async {
+                await _settingsService.setSaveHistoryEnabled(val);
+                if (mounted) setState(() {});
+              },
+            ),
+          ),
+          _SettingsTile(
+            title: 'Audio/Visual Recording Consent (CIPA)',
+            subtitle: _settingsService.hasRecordingConsent
+                ? 'Consent granted for microphone audio & camera recognition'
+                : 'Consent required prior to recording voice or video',
+            trailing: Switch(
+              value: _settingsService.hasRecordingConsent,
+              onChanged: (val) async {
+                await _settingsService.setRecordingConsent(val);
+                if (mounted) setState(() {});
+              },
+            ),
+          ),
           _SettingsTile(
             title: 'Export History',
             subtitle: 'Export translation history as CSV',
@@ -597,8 +625,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
 
           const SizedBox(height: 24),
-          // About Section
-          _SectionHeader('About'),
+          // Legal & About Section
+          _SectionHeader('Legal & Compliance'),
+          _SettingsTile(
+            title: 'Privacy Policy & COPPA Statement',
+            subtitle: 'GDPR, COPPA, CIPA, and CAN-SPAM disclosures',
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()),
+              );
+            },
+          ),
+          _SettingsTile(
+            title: 'DMCA & Copyright Takedowns',
+            subtitle: 'Notice procedure, agent details & repeat infringer policy',
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DMCAPolicyScreen()),
+              );
+            },
+          ),
           _SettingsTile(
             title: 'Welcome & Landing Page',
             subtitle: 'Revisit introduction, quick phrases & controls',
@@ -610,12 +660,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             },
           ),
-          _SettingsTile(title: 'Version', subtitle: '1.0.0'),
           _SettingsTile(
-            title: 'Privacy Policy',
-            subtitle: 'View our privacy policy',
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showAboutDialog('Privacy Policy'),
+            title: 'Version',
+            subtitle: '1.0.0',
+            onTap: () => _showAboutDialog('Version'),
           ),
           _SettingsTile(
             title: 'Licenses',

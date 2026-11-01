@@ -20,6 +20,9 @@ class SettingsService extends ChangeNotifier {
   static const _ttsServerTokenKey = 'tts_server_token';
   static const _ttsOnlineVoiceKey = 'tts_online_voice';
   static const _ttsOfflineEnglishVoiceKey = 'tts_offline_english_voice';
+  static const _ageVerificationKey = 'age_verification_status';
+  static const _cipaRecordingConsentKey = 'cipa_recording_consent';
+  static const _saveHistoryEnabledKey = 'save_history_enabled';
 
   SharedPreferences? _prefs;
 
@@ -57,7 +60,7 @@ class SettingsService extends ChangeNotifier {
   // Model Version
   String get modelVersion {
     final savedVersion = _prefs?.getString(_modelVersionKey);
-    return savedVersion == null || savedVersion == '1.0.0-mock'
+    return (savedVersion == null || savedVersion.isEmpty)
         ? 'Not installed'
         : savedVersion;
   }
@@ -224,5 +227,31 @@ class SettingsService extends ChangeNotifier {
     } else {
       await _prefs?.setString(_ttsVoiceIdentifierKey, identifier);
     }
+  }
+
+  // COPPA Compliance: Age verification (null = not answered, true = 13+, false = under 13)
+  bool? get isOver13 => _prefs?.getBool(_ageVerificationKey);
+
+  Future<void> setAgeStatus(bool isOver13) async {
+    await _prefs?.setBool(_ageVerificationKey, isOver13);
+    notifyListeners();
+  }
+
+  // CIPA Compliance: Affirmative audio/visual recording consent
+  bool get hasRecordingConsent =>
+      _prefs?.getBool(_cipaRecordingConsentKey) ?? false;
+
+  Future<void> setRecordingConsent(bool consent) async {
+    await _prefs?.setBool(_cipaRecordingConsentKey, consent);
+    notifyListeners();
+  }
+
+  // Privacy: Toggle local conversation persistence in SQLite
+  bool get saveHistoryEnabled =>
+      _prefs?.getBool(_saveHistoryEnabledKey) ?? true;
+
+  Future<void> setSaveHistoryEnabled(bool enabled) async {
+    await _prefs?.setBool(_saveHistoryEnabledKey, enabled);
+    notifyListeners();
   }
 }

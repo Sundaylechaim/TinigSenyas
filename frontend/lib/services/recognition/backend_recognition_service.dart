@@ -30,9 +30,11 @@ class BackendRecognitionService implements RecognitionService {
   final Dio _dio;
   final _predictionsController = StreamController<SignResult>.broadcast();
   final _progressController = StreamController<RecognitionProgress>.broadcast();
+  final _pauseStatusController = StreamController<bool>.broadcast();
   Timer? _pollingTimer;
   bool _isInitialized = false;
   bool _isRunning = false;
+  bool _isPaused = false;
   String? _lastEmittedLabel;
   DateTime _lastEmittedTime = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -51,6 +53,12 @@ class BackendRecognitionService implements RecognitionService {
 
   @override
   bool get isModelReady => _isInitialized;
+
+  @override
+  bool get isPaused => _isPaused;
+
+  @override
+  Stream<bool>? get pauseStatus => _pauseStatusController.stream;
 
   Stream<RecognitionProgress> get progress => _progressController.stream;
 
@@ -123,6 +131,18 @@ class BackendRecognitionService implements RecognitionService {
       final res = await _dio.get('$baseUrl/api/v1/predict/live');
       if (res.statusCode == 200 && res.data is Map) {
         final data = res.data as Map<String, dynamic>;
+        final isPaused = data['is_paused'] as bool? ?? false;
+
+        if (isPaused != _isPaused) {
+          _isPaused = isPaused;
+          _pauseStatusController.add(isPaused);
+        }
+
+        if (isPaused) {
+          // Open Palm pause active: skip emission to prevent false recognition
+          return;
+        }
+
         final confidence = (data['confidence'] as num?)?.toDouble() ?? 0.0;
         final isStable = data['is_stable'] as bool? ?? false;
         final label = data['label'] as String?;
@@ -170,5 +190,6 @@ class BackendRecognitionService implements RecognitionService {
     _pollingTimer?.cancel();
     _predictionsController.close();
     _progressController.close();
+    _pauseStatusController.close();
   }
 }

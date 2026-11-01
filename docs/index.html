@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Download TinigSenyas — Filipino Sign Language Translator</title>
+  <meta name="description" content="Download TinigSenyas for Android and iOS. 100% Free Filipino Sign Language communication app.">
+  <meta name="theme-color" content="#0d1117">
+  <link rel="icon" href="assets/icon.png">
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --card-bg: #161b22;
+      --card-border: #30363d;
+      --primary: #58a6ff;
+      --primary-hover: #79c0ff;
+      --accent: #238636;
+      --accent-hover: #2ea043;
+      --text: #f0f6fc;
+      --text-dim: #8b949e;
+      --apple: #a371f7;
+      --android: #3fb950;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px;
+    }
+    .container {
+      width: 100%;
+      max-width: 580px;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .app-icon {
+      width: 80px;
+      height: 80px;
+      border-radius: 20px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      margin-bottom: 16px;
+      background: #1f242c;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    p.subtitle {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.4;
+    }
+    .pill {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 4px 12px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(88, 166, 255, 0.1);
+      color: var(--primary);
+      border: 1px solid rgba(88, 166, 255, 0.2);
+    }
+    .device-banner {
+      background: rgba(35, 134, 54, 0.15);
+      border: 1px solid rgba(63, 185, 80, 0.3);
+      color: #7ee787;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    /* Tabs */
+    .tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      background: var(--card-bg);
+      padding: 6px;
+      border-radius: 14px;
+      border: 1px solid var(--card-border);
+      margin-bottom: 20px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: 0;
+      color: var(--text-dim);
+      padding: 12px 16px;
+      font-size: 15px;
+      font-weight: 700;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+    .tab-btn.active {
+      background: #21262d;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+    .tab-btn.active.android-active {
+      color: var(--android);
+    }
+    .tab-btn.active.ios-active {
+      color: var(--apple);
+    }
+    /* Content panels */
+    .panel {
+      display: none;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 20px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+    }
+    .panel.active {
+      display: block;
+      animation: fadeIn 0.2s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .panel-title {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .panel-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-android { background: rgba(63, 185, 80, 0.15); color: var(--android); border: 1px solid rgba(63, 185, 80, 0.3); }
+    .badge-ios { background: rgba(163, 113, 247, 0.15); color: var(--apple); border: 1px solid rgba(163, 113, 247, 0.3); }
+
+    .btn-download {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      padding: 15px 20px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-size: 16px;
+      font-weight: 700;
+      margin: 14px 0;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    .btn-android {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-android:hover {
+      background: var(--accent-hover);
+    }
+    .btn-ios {
+      background: #8957e5;
+      color: #fff;
+    }
+    .btn-ios:hover {
+      background: #9b69fc;
+    }
+    .btn-secondary {
+      background: #21262d;
+      color: var(--primary);
+      border: 1px solid var(--card-border);
+      font-size: 14px;
+      padding: 11px;
+    }
+    .btn-secondary:hover {
+      background: #30363d;
+    }
+
+    .instructions {
+      margin-top: 18px;
+      border-top: 1px solid var(--card-border);
+      padding-top: 14px;
+    }
+    .instructions h4 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+    .instructions ol {
+      padding-left: 20px;
+      font-size: 14px;
+      color: #c9d1d9;
+      line-height: 1.6;
+    }
+    .instructions li {
+      margin-bottom: 6px;
+    }
+    .tip-box {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: rgba(88, 166, 255, 0.08);
+      border-left: 3px solid var(--primary);
+      font-size: 13px;
+      color: #c9d1d9;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: auto;
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    footer a { color: var(--primary); text-decoration: none; }
+
+    /* GDPR Consent Banner */
+    .consent-banner {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #161b22;
+      border-top: 1px solid var(--card-border);
+      padding: 16px 20px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 9999;
+      box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+      font-size: 13px;
+    }
+    .consent-text {
+      color: #c9d1d9;
+      line-height: 1.5;
+    }
+    .consent-actions {
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .btn-consent {
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+    }
+    .btn-consent-accept {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-consent-accept:hover {
+      background: var(--accent-hover);
+    }
+    .btn-consent-reject {
+      background: #21262d;
+      color: var(--text-dim);
+      border-color: var(--card-border);
+    }
+    .btn-consent-reject:hover {
+      background: #30363d;
+      color: #fff;
+    }
+    @media (max-width: 600px) {
+      .consent-banner {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .consent-actions {
+        width: 100%;
+        justify-content: flex-end;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <img src="assets/icon.png" alt="TinigSenyas" class="app-icon" onerror="this.style.display='none'">
+      <h1>TinigSenyas</h1>
+      <p class="subtitle">Filipino Sign Language Real-Time Translation Application<br>Proudly made for KAINAKAP Members & Community</p>
+      <span class="pill">100% Free • Offline-First</span>
+    </header>
+
+    <div id="deviceBadge" class="device-banner">
+      Detecting your device...
+    </div>
+
+    <!-- Platform Selection Tabs -->
+    <div class="tabs">
+      <button id="androidTab" class="tab-btn active android-active" onclick="selectTab('android')">
+        🤖 Android
+      </button>
+      <button id="iosTab" class="tab-btn" onclick="selectTab('ios')">
+        🍎 iOS / iPhone
+      </button>
+    </div>
+
+    <!-- Android Panel -->
+    <div id="androidPanel" class="panel active">
+      <div class="panel-header">
+        <div class="panel-title">Android Package (.APK)</div>
+        <div class="panel-badge badge-android">Ready to Install</div>
+      </div>
+      <p style="font-size:14px; color:#c9d1d9;">Direct installer compatible with 99% of Android phones (Samsung, Xiaomi, Realme, Oppo, Vivo, etc.).</p>
+
+      <a id="androidDownloadBtn" href="https://github.com/Sundaylechaim/TinigSenyas/releases/latest/download/TinigSenyas-Android.apk" class="btn-download btn-android">
+        ⬇️ Download Android APK
+      </a>
+
+      <div class="instructions">
+        <h4>How to install on Android:</h4>
+        <ol>
+          <li>Tap <b>Download Android APK</b> above.</li>
+          <li>Once downloaded, open the file from your Notifications or <i>Downloads</i> folder.</li>
+          <li>If your phone says <i>"Install unknown apps"</i>, tap <b>Settings</b> and enable <b>"Allow from this source"</b>.</li>
+          <li>If Google Play Protect warns about an unrecognized developer, tap <b>"More details"</b> &rarr; <b>"Install anyway"</b>.</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- iOS Panel -->
+    <div id="iosPanel" class="panel">
+      <div class="panel-header">
+        <div class="panel-title">iOS Package (.IPA)</div>
+        <div class="panel-badge badge-ios">No Mac Required</div>
+      </div>
+      <p style="font-size:14px; color:#c9d1d9;">Deploy directly to your iPhone without needing a paid $99/year Apple Developer account.</p>
+
+      <a id="iosDownloadBtn" href="https://github.com/Sundaylechaim/TinigSenyas/releases/latest/download/TinigSenyas-iOS.ipa" class="btn-download btn-ios">
+        ⬇️ Download TinigSenyas.ipa
+      </a>
+
+      <a href="https://appetize.io/upload" target="_blank" rel="noopener" class="btn-download btn-secondary">
+        🌐 Test Live in Browser (Appetize.io)
+      </a>
+
+      <div class="instructions">
+        <h4>Method 1: Install on iPhone using Sideloadly (Free)</h4>
+        <ol>
+          <li>Download <b>Sideloadly</b> on your PC/Mac from <a href="https://sideloadly.io" target="_blank" rel="noopener" style="color:var(--primary);">sideloadly.io</a>.</li>
+          <li>Connect your iPhone to your computer with a USB cable and tap <b>Trust</b>.</li>
+          <li>Drag the downloaded <b>TinigSenyas-iOS.ipa</b> into Sideloadly.</li>
+          <li>Enter your standard Apple ID email and click <b>Start</b>.</li>
+          <li>On your iPhone: go to <b>Settings &rarr; General &rarr; VPN & Device Management</b> &rarr; tap your Apple ID &rarr; <b>Trust</b>.</li>
+          <li>If prompted: <b>Settings &rarr; Privacy & Security &rarr; Developer Mode &rarr; ON</b>.</li>
+        </ol>
+
+        <div class="tip-box">
+          <b>No iPhone?</b> You can download the <a href="https://github.com/Sundaylechaim/TinigSenyas/releases/latest/download/TinigSenyas-iOS-Simulator.zip" style="color:var(--primary);">Simulator ZIP</a> and drop it into <b>Appetize.io</b> to run it interactively right in your web browser!
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <p>Source Code & Releases: <a href="https://github.com/Sundaylechaim/TinigSenyas" target="_blank" rel="noopener noreferrer">github.com/Sundaylechaim/TinigSenyas</a></p>
+      <p style="margin-top:6px;">
+        <a href="privacy.html">Privacy Policy & COPPA</a> &bull; 
+        <a href="dmca.html">DMCA Copyright Policy</a>
+      </p>
+      <p style="margin-top:6px; font-size:11px;">KAINAKAP Organization &bull; TinigSenyas Project Team</p>
+    </footer>
+  </div>
+
+  <script>
+    function detectPlatform() {
+      const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+      const isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
+      const isAndroid = /android/i.test(userAgent);
+
+      const badge = document.getElementById('deviceBadge');
+      if (isIOS) {
+        badge.innerHTML = '🍎 <b>iPhone / iOS device detected!</b> Showing iOS download & instructions.';
+        selectTab('ios');
+      } else if (isAndroid) {
+        badge.innerHTML = '🤖 <b>Android device detected!</b> Tap below to install the APK directly.';
+        selectTab('android');
+      } else {
+        badge.innerHTML = '💻 <b>Desktop / PC detected.</b> Choose Android or iOS to view downloads.';
+        selectTab('android');
+      }
+    }
+
+    function selectTab(platform) {
+      const androidTab = document.getElementById('androidTab');
+      const iosTab = document.getElementById('iosTab');
+      const androidPanel = document.getElementById('androidPanel');
+      const iosPanel = document.getElementById('iosPanel');
+
+      if (platform === 'ios') {
+        androidTab.className = 'tab-btn';
+        iosTab.className = 'tab-btn active ios-active';
+        androidPanel.className = 'panel';
+        iosPanel.className = 'panel active';
+      } else {
+        androidTab.className = 'tab-btn active android-active';
+        iosTab.className = 'tab-btn';
+        androidPanel.className = 'panel active';
+        iosPanel.className = 'panel';
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', detectPlatform);
+  </script>
+
+  <!-- GDPR & Privacy Consent Banner -->
+  <div id="gdprConsentBanner" class="consent-banner">
+    <div class="consent-text">
+      <strong>Privacy & Consent Notice:</strong> TinigSenyas uses self-hosted resources and zero advertising trackers. In compliance with GDPR and COPPA (strict 13+ age restriction), we require your acknowledgment. Review our <a href="privacy.html" style="color:var(--primary);">Privacy Policy</a> and <a href="dmca.html" style="color:var(--primary);">DMCA Policy</a>.
+    </div>
+    <div class="consent-actions">
+      <button class="btn-consent btn-consent-reject" onclick="handleConsent(false)">Essential Only</button>
+      <button class="btn-consent btn-consent-accept" onclick="handleConsent(true)">Accept & Continue</button>
+    </div>
+  </div>
+
+  <script>
+    function checkConsent() {
+      if (!localStorage.getItem('tinigsenyas_consent_decision')) {
+        document.getElementById('gdprConsentBanner').style.display = 'flex';
+      }
+    }
+    function handleConsent(accepted) {
+      localStorage.setItem('tinigsenyas_consent_decision', accepted ? 'accepted' : 'essential');
+      document.getElementById('gdprConsentBanner').style.display = 'none';
+    }
+    window.addEventListener('DOMContentLoaded', checkConsent);
+  </script>
+</body>
+</html>
+

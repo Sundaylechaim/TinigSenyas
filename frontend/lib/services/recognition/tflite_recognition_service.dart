@@ -12,6 +12,12 @@ class TfliteRecognitionService implements RecognitionService {
   bool get isModelReady => _isInitialized;
 
   @override
+  bool get isPaused => false;
+
+  @override
+  Stream<bool>? get pauseStatus => null;
+
+  @override
   Future<void> initialize() async {
     _isInitialized = true;
   }

@@ -1,0 +1,53 @@
+# ============================================================================
+# Environment Variables & Secrets (CRITICAL SECURITY)
+# Never expose or commit API keys, tokens, or environment files to version control
+# ============================================================================
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.jks
+secrets/
+credentials*.json
+
+# User Personal Data Protection (RA 10173 & GDPR)
+backend/email_suppression_list.json
+*.db
+*.sqlite
+*.sqlite3
+
+# Python Virtual Environments & Caches
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+
+# Flutter / Dart Build & Cache
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.pub-cache/
+**/.pub/
+
+# Mobile Signing Keys & Provisioning
+android/app/*.jks
+android/app/*.keystore
+android/key.properties
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# System & Editor Files
+.DS_Store
+Thumbs.db
+**/.vscode/
+**/.idea/
+*.iml
+

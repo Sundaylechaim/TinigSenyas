@@ -2,17 +2,28 @@ import logging
 import os
 import sys
 import warnings
+from pathlib import Path
+
+# Automatically load environment variables from .env
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).resolve().parent / ".env"
+    if _env_path.exists():
+        load_dotenv(dotenv_path=_env_path)
+except Exception:
+    pass
 
 # Suppress noisy oneDNN and deprecation terminal spam
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = os.environ.get("TF_ENABLE_ONEDNN_OPTS", "0")
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = os.environ.get("TF_CPP_MIN_LOG_LEVEL", "3")
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import cv2
 import mediapipe as mp
 import uvicorn
-from fastapi import FastAPI, HTTPException
+import numpy as np
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -20,6 +31,7 @@ from typing import List, Optional
 
 from tts_api import tts_api
 from hand_tracker import HandTracker, HandValidationResult
+from email_service import suppression_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tinigsenyas.backend")
@@ -60,10 +72,17 @@ async def add_security_headers(request, call_next):
     """Enforces standard web security headers on all API responses."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    if not request.url.path.startswith("/video_feed"):
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
     return response
+
+@app.get("/health", tags=["Health"])
+@app.get("/tts/health", tags=["Health"])
+async def health_check():
+    return {"status": "ok", "service": "TinigSenyas Backend"}
 
 # Mount TTS Router
 app.include_router(tts_api)
@@ -121,6 +140,77 @@ async def get_vocabulary_sync():
     return _DEFAULT_VOCABULARY
 
 # ---------------------------------------------------------------------------
+# CAN-SPAM Compliance Endpoint (15 U.S.C. § 7704)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/unsubscribe", tags=["Legal & CAN-SPAM"])
+async def unsubscribe_email(email: str):
+    """
+    CAN-SPAM mandatory 1-click opt-out endpoint.
+    Permanently suppresses future commercial messages to this email address.
+    """
+    try:
+        suppression_manager.add_suppression(email)
+        return {
+            "status": "success",
+            "message": f"Successfully unsubscribed {email}. You will not receive further marketing emails.",
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# ---------------------------------------------------------------------------
+# DMCA Safe Harbor Endpoints (17 U.S.C. § 512)
+# ---------------------------------------------------------------------------
+
+class DMCATakedownRequest(BaseModel):
+    item_id: int
+    item_type: str  # 'vocabulary', 'gesture', 'media'
+    complaining_party: str
+    alleged_copyright_holder: str
+    work_description: str
+    infringing_url_or_label: str
+    signature: str
+
+class DMCABanRequest(BaseModel):
+    user_id: str
+    infringement_count: int
+    reason: str
+
+_BANNED_REPEAT_INFRINGERS = set()
+
+@app.post("/api/v1/dmca/takedown", tags=["DMCA Safe Harbor"])
+async def process_dmca_takedown(payload: DMCATakedownRequest):
+    """
+    DMCA § 512(c) expedited content removal endpoint.
+    Immediately disables or removes alleged infringing content upon notice.
+    """
+    logger.warning("Processing DMCA takedown notice for %s %s from %s", payload.item_type, payload.item_id, payload.complaining_party)
+    global _DEFAULT_VOCABULARY
+    if payload.item_type == "vocabulary":
+        _DEFAULT_VOCABULARY = [item for item in _DEFAULT_VOCABULARY if item.fsl_id != payload.item_id]
+    return {
+        "status": "content_removed",
+        "takedown_id": f"dmca-{payload.item_id}",
+        "message": f"Content item {payload.item_id} disabled in compliance with 17 U.S.C. § 512(c).",
+    }
+
+@app.post("/api/v1/dmca/ban_user", tags=["DMCA Safe Harbor"])
+async def ban_repeat_infringer(payload: DMCABanRequest):
+    """
+    DMCA § 512(i) repeat infringer policy enforcement endpoint.
+    Permanently bans accounts or users found to repeatedly infringe intellectual property.
+    """
+    if payload.infringement_count < 2:
+        raise HTTPException(status_code=400, detail="Repeat infringer status requires at least 2 substantiated violations.")
+    _BANNED_REPEAT_INFRINGERS.add(payload.user_id)
+    logger.warning("User '%s' permanently banned under DMCA repeat infringer policy.", payload.user_id)
+    return {
+        "status": "user_banned",
+        "user_id": payload.user_id,
+        "message": f"User '{payload.user_id}' has been permanently terminated under DMCA Repeat Infringer Policy.",
+    }
+
+# ---------------------------------------------------------------------------
 # MediaPipe Camera Stream & ST-GCN Sign Language Classification
 # ---------------------------------------------------------------------------
 
@@ -135,18 +225,25 @@ latest_prediction: dict = {
     "buffer_progress": 0.0,
     "window_duration_seconds": 2.0,
     "is_stable": False,
+    "is_paused": False,
+    "palm_hold_progress": 0.0,
 }
 global_classifier = None
 
 
 def generate_frames():
     global latest_hand_result, latest_hand_features, latest_prediction, global_classifier
-    camera = cv2.VideoCapture(0)
+    if sys.platform == "win32":
+        camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        if not camera.isOpened():
+            camera = cv2.VideoCapture(0)
+    else:
+        camera = cv2.VideoCapture(0)
     camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    classifier = None
+    classifier = global_classifier
     if HAS_SIGN_CLASSIFIER:
         try:
             classifier = SignClassifier()
@@ -190,8 +287,6 @@ def generate_frames():
             )
     finally:
         camera.release()
-        if classifier:
-            classifier.close()
         if tracker:
             tracker.close()
 
@@ -213,6 +308,84 @@ def get_live_prediction():
     Returns the real-time ST-GCN predicted FSL sign gesture, confidence score, and buffer progress.
     """
     return latest_prediction
+
+
+@app.post("/api/v1/predict/frame", tags=["Sign Language Recognition"])
+async def predict_frame(request: Request):
+    """
+    Processes an uploaded camera frame for landmarks and ST-GCN sign language recognition.
+    Supports raw JPEG bytes and multipart uploads.
+    """
+    global latest_hand_result, latest_hand_features, latest_prediction, global_classifier
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty frame request body")
+
+    # Extract JPEG bytes whether passed directly or wrapped in multipart boundary
+    soi = body.find(b"\xff\xd8")
+    eoi = body.rfind(b"\xff\xd9")
+    if soi != -1 and eoi != -1 and eoi > soi:
+        contents = body[soi : eoi + 2]
+    else:
+        contents = body
+
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(status_code=400, detail="Invalid image file or format")
+
+    h, w = img.shape[:2]
+    landmarks_list = []
+    status = "collecting"
+    frames_collected = 0
+    label = None
+    confidence = 0.0
+
+    if global_classifier is None and HAS_SIGN_CLASSIFIER:
+        try:
+            global_classifier = SignClassifier()
+            logger.info("ST-GCN SignClassifier initialized for predict_frame.")
+        except Exception as exc:
+            logger.error("Failed to initialize SignClassifier: %s", exc)
+
+    if global_classifier is not None:
+        processed_frame, pred_payload = global_classifier.process_frame(img)
+        latest_prediction = pred_payload
+        label = pred_payload.get("label")
+        confidence = pred_payload.get("confidence", 0.0)
+        status = "recognized" if pred_payload.get("is_stable") else "collecting"
+        frames_collected = len(global_classifier.frame_buffer)
+        if hasattr(global_classifier, "norm_hand_63") and global_classifier.norm_hand_63 is not None:
+            pts = global_classifier.norm_hand_63.reshape(21, 3)[:, :2].tolist()
+            landmarks_list.append(pts)
+    else:
+        tracker = HandTracker(
+            max_num_hands=2,
+            min_detection_confidence=0.6,
+            min_tracking_confidence=0.5,
+            smoothing_alpha=0.7,
+            mirror_camera=True,
+        )
+        try:
+            _, result = tracker.process_frame(img)
+            latest_hand_result = result
+            latest_hand_features = tracker.extract_model_features(result)
+            for hand in result.hands:
+                landmarks_list.append([[lm["x"], lm["y"]] for lm in hand.landmarks])
+        finally:
+            tracker.close()
+
+    return {
+        "status": status,
+        "frames_collected": frames_collected,
+        "sequence_length": 60,
+        "hand_landmarks": landmarks_list,
+        "frame_width": w,
+        "frame_height": h,
+        "label": label,
+        "confidence": confidence,
+    }
 
 
 @app.get("/api/v1/hands/status", tags=["Hand Validation"])

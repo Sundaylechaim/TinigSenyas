@@ -1,0 +1,209 @@
+name: Unified Android & iOS Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  APP_NAME: "TinigSenyas"
+  BUNDLE_ID: "com.tinigsenyas.app"
+  DEVELOPER: "Sundaylechaim"
+
+jobs:
+  # -------------------------------------------------------------
+  # Job 1: Build Android APK
+  # -------------------------------------------------------------
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Dependencies
+        working-directory: frontend
+        run: flutter pub get
+
+      - name: Build Release APK
+        working-directory: frontend
+        run: flutter build apk --release
+
+      - name: Prepare Android Binary
+        run: |
+          mkdir -p dist
+          cp frontend/build/app/outputs/flutter-apk/app-release.apk dist/TinigSenyas-Android.apk
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-dist
+          path: dist/TinigSenyas-Android.apk
+
+  # -------------------------------------------------------------
+  # Job 2: Build iOS IPA & Simulator Build (unmac)
+  # -------------------------------------------------------------
+  build-ios:
+    name: Build iOS IPA (Cloud Mac)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Dependencies
+        working-directory: frontend
+        run: flutter pub get
+
+      - name: Release build (unsigned)
+        working-directory: frontend
+        run: flutter build ios --release --no-codesign
+
+      - name: Package TinigSenyas-iOS.ipa
+        run: |
+          mkdir -p out/Payload
+          cp -R frontend/build/ios/iphoneos/Runner.app out/Payload/
+          (cd out && zip -qry "$GITHUB_WORKSPACE/TinigSenyas-iOS.ipa" Payload)
+
+      - name: Simulator build for Appetize (debug)
+        continue-on-error: true
+        run: |
+          cd frontend
+          flutter build ios --simulator --debug
+          (cd build/ios/iphonesimulator && zip -qry "$GITHUB_WORKSPACE/TinigSenyas-iOS-Simulator.zip" Runner.app)
+
+      - name: Generate AltStore / SideStore source.json
+        run: |
+          python3 - <<'EOF'
+          import datetime, json, os
+          tag = os.environ.get("GITHUB_REF_NAME", "v1.0.0")
+          repo = os.environ["GITHUB_REPOSITORY"]
+          ipa_path = os.path.join(os.environ["GITHUB_WORKSPACE"], "TinigSenyas-iOS.ipa")
+          ipa_size = os.path.getsize(ipa_path) if os.path.exists(ipa_path) else 0
+          source = {
+              "name": os.environ["APP_NAME"],
+              "nsfw": False,
+              "apps": [{
+                  "name": os.environ["APP_NAME"],
+                  "bundleIdentifier": os.environ["BUNDLE_ID"],
+                  "developerName": os.environ["DEVELOPER"],
+                  "localizedDescription": os.environ["APP_NAME"],
+                  "iconURL": f"https://raw.githubusercontent.com/{repo}/HEAD/frontend/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png",
+                  "versions": [{
+                      "version": tag.lstrip("v"),
+                      "buildVersion": os.environ.get("GITHUB_RUN_NUMBER", "1"),
+                      "date": datetime.date.today().isoformat(),
+                      "downloadURL": f"https://github.com/{repo}/releases/download/{tag}/TinigSenyas-iOS.ipa",
+                      "size": ipa_size,
+                  }],
+                  "appPermissions": {"entitlements": [], "privacy": {}},
+              }],
+          }
+          json.dump(source, open(os.path.join(os.environ["GITHUB_WORKSPACE"], "source.json"), "w"), indent=2)
+          EOF
+
+      - name: Upload iOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-dist
+          path: |
+            TinigSenyas-iOS.ipa
+            TinigSenyas-iOS-Simulator.zip
+            source.json
+
+  # -------------------------------------------------------------
+  # Job 3: Unified Release (Bundles both Android & iOS together)
+  # -------------------------------------------------------------
+  publish-unified-release:
+    name: Publish Unified Release
+    needs: [build-android, build-ios]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-dist
+          path: release_assets
+
+      - name: Download iOS Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-dist
+          path: release_assets
+
+      - name: Generate Release Body
+        run: |
+          cat << 'EOF' > release_body.md
+          # TinigSenyas Mobile App Release
+
+          Choose your platform below to download and install TinigSenyas:
+
+          ---
+
+          ### 📱 Android Users
+          - **Download:** [`TinigSenyas-Android.apk`](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/TinigSenyas-Android.apk)
+          - **Installation:**
+            1. Tap the link above on your Android phone to download.
+            2. Open the downloaded `.apk` file.
+            3. If prompted, allow **"Install unknown apps"** in Settings.
+            4. If Google Play Protect asks, select **"More details" -> "Install anyway"**.
+
+          ---
+
+          ### 🍎 iOS / iPhone Users
+          - **Download:** [`TinigSenyas-iOS.ipa`](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/TinigSenyas-iOS.ipa)
+          - **Option 1 (Physical iPhone via Sideloadly - 100% Free):**
+            1. Download [Sideloadly](https://sideloadly.io) on your PC/Mac.
+            2. Connect your iPhone via USB cable and tap **Trust**.
+            3. Drag `TinigSenyas-iOS.ipa` into Sideloadly, enter your free Apple ID, and click **Start**.
+            4. On iPhone: Go to **Settings -> General -> VPN & Device Management** and tap **Trust**.
+          - **Option 2 (Instant Browser Testing - No iPhone Required):**
+            1. Download [`TinigSenyas-iOS-Simulator.zip`](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/TinigSenyas-iOS-Simulator.zip).
+            2. Upload to [Appetize.io](https://appetize.io) to run the iOS app directly in your web browser.
+          - **Option 3 (AltStore / SideStore):** Add [`source.json`](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/source.json) as a custom source.
+          EOF
+
+      - name: Create GitHub Release (on tag push)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_body.md
+          files: |
+            release_assets/TinigSenyas-Android.apk
+            release_assets/TinigSenyas-iOS.ipa
+            release_assets/TinigSenyas-iOS-Simulator.zip
+            release_assets/source.json
+          fail_on_unmatched_files: true
+
+      - name: Upload Unified Package (on workflow_dispatch)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: TinigSenyas-Universal-Package
+          path: release_assets/*
+

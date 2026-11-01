@@ -5,8 +5,8 @@ TinigSenyas is an interactive capstone project designed to bridge communication 
 Developed for the Capstone Project at Eulogio "Amang" Rodriguez Institute of Science and Technology (EARIST) in collaboration with **KAINAKAP Inclusive and Opportunity Inc.**
 
 ## Authors & Project Team
-- **Ambuyo, Joycce Bernadeth** — Thesis Leader, AI/Data Engineer, Mobile App Developeer
-- **Lagapa, John Laurence** — AI / Data Engineer
+- **Ambuyo, Joycce Bernadeth** — Thesis Leader, AI/Data Engineer, Mobile App Developer
+- **Lagapa, John Laurence** — AI / Data Engineer, Communication Leader
 - **Nadonga, Sunday Le'chaim L.** — Mobile App Developer, AI/Data Engineer
 - **Suarilla, Ynewson** — UI/UX Designer
 
@@ -90,6 +90,5 @@ powershell -ExecutionPolicy Bypass -File .\frontend\run_web.ps1
 
 For community testing and sharing with KAINAKAP members:
 - See the complete step-by-step guide: [docs/FREE_DEPLOYMENT_AND_OTA_GUIDE.md](docs/FREE_DEPLOYMENT_AND_OTA_GUIDE.md)
-- Complete Chapter 3 ML technical specifications: [docs/CHAPTER3_MODEL_SPECIFICATIONS.md](docs/CHAPTER3_MODEL_SPECIFICATIONS.md)
 - **One-Click Android Build**: Run `frontend/build_android_apk.ps1` to compile the release APK and automatically prepare the file for Google Drive distribution.
 - **iOS Free Installation**: Run as a PWA via Safari ("Add to Home Screen") or sideload via Sideloadly with a free Apple ID.

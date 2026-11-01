@@ -9,5 +9,7 @@ abstract class RecognitionService {
   Future<void> stop();
   Future<void> processFrame(CameraImage image);
   Stream<SignResult> get predictions;
+  Stream<bool>? get pauseStatus;
+  bool get isPaused;
   void dispose();
 }

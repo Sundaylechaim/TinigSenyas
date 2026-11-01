@@ -7,6 +7,7 @@ import '../services/tts_service.dart';
 import '../services/database_helper.dart';
 import '../services/speech_transcript_session.dart';
 import '../widgets/connectivity_badge.dart';
+import '../services/settings_service.dart';
 
 const Color _kAppBlue = Color(0xFF0138FF);
 const Color _kAppYellow = Color(0xFFFFC801);
@@ -84,14 +85,54 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   Future<void> _toggleListen() async {
     if (!_isListening) {
       if (_isStarting || _isStopping) return;
-      if (!_speechAvailable) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _speechError ?? 'Speech recognition unavailable on this device',
+
+      // CIPA Check: Affirmative two-party consent to record audio communications
+      final settings = context.read<SettingsService>();
+      if (!settings.hasRecordingConsent) {
+        final consentGiven = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            icon: const Icon(Icons.mic, color: Color(0xFF0138FF), size: 40),
+            title: const Text('Audio Recording Consent (CIPA)'),
+            content: const Text(
+              'Under wiretapping and communications privacy laws (CIPA), '
+              'TinigSenyas requires your explicit consent to access the microphone and '
+              'record spoken audio for translation into Filipino Sign Language. '
+              'Do you consent to audio recording for translation?',
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Decline'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('I Consent'),
+              ),
+            ],
           ),
         );
+
+        if (consentGiven != true) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Audio recording consent is required.')),
+            );
+          }
+          return;
+        }
+        await settings.setRecordingConsent(true);
+      }
+      if (!_speechAvailable) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _speechError ?? 'Speech recognition unavailable on this device',
+              ),
+            ),
+          );
+        }
         return;
       }
 
@@ -191,6 +232,18 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   }
 
   Future<void> _saveMessage(String message) async {
+    final settings = context.read<SettingsService>();
+    if (!settings.saveHistoryEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Private Mode active: conversation history is not saved.'),
+            duration: Duration(milliseconds: 1200),
+          ),
+        );
+      }
+      return;
+    }
     try {
       await DatabaseHelper.instance.saveRecognizedGesture(
         message,
