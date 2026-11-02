@@ -103,6 +103,9 @@ async def synthesize_speech(
     client_ip = request.client.host if request.client else "127.0.0.1"
     is_local_client = (
         client_ip in {"127.0.0.1", "::1"}
+        # Behind a reverse proxy the peer address is the proxy itself, so a forwarded
+        # request must never inherit the loopback token bypass.
+        and not request.headers.get("x-forwarded-for")
         and _is_loopback_origin(origin)
     )
 

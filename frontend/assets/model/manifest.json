@@ -1,6 +1,6 @@
 {
   "version": "1.0.1",
-  "url": "assets/model/fsl_model.tflite",
-  "sha256": "st_gcn_103_classes",
+  "url": "https://github.com/Sundaylechaim/TinigSenyas/releases/latest/download/fsl_model.tflite",
+  "sha256": "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
   "min_app_version": "1.0.0"
 }

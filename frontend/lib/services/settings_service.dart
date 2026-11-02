@@ -129,11 +129,15 @@ class SettingsService extends ChangeNotifier {
           parsedUrl.userInfo.isNotEmpty ||
           parsedUrl.hasQuery ||
           parsedUrl.hasFragment ||
-          !const {'http', 'https'}.contains(parsedUrl.scheme)) {
+          !const {'http', 'https'}.contains(parsedUrl.scheme) ||
+          // Cleartext http is only sane against the developer's own machine; anything
+          // further away would leak the bearer token and the transcribed dialogue.
+          (parsedUrl.scheme == 'http' &&
+              !const {'localhost', '127.0.0.1', '::1'}.contains(parsedUrl.host))) {
         throw ArgumentError.value(
           url,
           'url',
-          'Enter a valid HTTP(S) server URL.',
+          'Enter a valid HTTPS server URL (plain http is only allowed for localhost).',
         );
       }
     }

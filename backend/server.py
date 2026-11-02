@@ -1,3 +1,4 @@
+import hmac
 import logging
 import os
 import sys
@@ -23,7 +24,7 @@ import cv2
 import mediapipe as mp
 import uvicorn
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -49,12 +50,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Secure CORS configuration for Flutter web / mobile clients
+# Secure CORS configuration for Flutter web / mobile clients.
+# Localhost entries back the local dev launcher; hosted frontends must be listed in
+# APP_ALLOWED_ORIGINS (comma-separated) or their preflight requests are rejected.
 ALLOWED_ORIGINS = [
     "http://localhost:5001",
     "http://127.0.0.1:5001",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+] + [
+    item.strip()
+    for item in os.environ.get("APP_ALLOWED_ORIGINS", "").split(",")
+    if item.strip()
 ]
 
 app.add_middleware(
@@ -118,15 +125,28 @@ _DEFAULT_VOCABULARY: List[FSLVocabularyItem] = [
     FSLVocabularyItem(fsl_id=8, word="Pakiusap", meaning="Magalang na kahilingan (Please)", gesture_label="pakiusap"),
 ]
 
+# OTA defaults describe the model actually bundled in this repository. Publish a new
+# .tflite asset and override these three variables to push an update to installed apps.
+_OTA_MODEL_URL = os.environ.get(
+    "OTA_MODEL_URL",
+    "https://github.com/Sundaylechaim/TinigSenyas/releases/latest/download/fsl_model.tflite",
+)
+_OTA_MODEL_SHA256 = os.environ.get(
+    "OTA_MODEL_SHA256",
+    "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
+)
+_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.0.1")
+
+
 @app.get("/api/v1/ota/manifest", response_model=ModelManifest, tags=["OTA Updates"])
 async def get_model_manifest():
     """
     Returns the latest ST-GCN quantized model metadata for mobile Over-The-Air deployment.
     """
     return ModelManifest(
-        version="1.0.1",
-        url="https://github.com/tinigsenyas/models/releases/download/v1.0.1/st_gcn_fsl_quantized.tflite",
-        sha256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        version=_OTA_MODEL_VERSION,
+        url=_OTA_MODEL_URL,
+        sha256=_OTA_MODEL_SHA256,
         min_app_version="1.0.0",
         notes="Optimized ST-GCN quantized model for transactional FSL isolated gestures.",
     )
@@ -178,12 +198,29 @@ class DMCABanRequest(BaseModel):
 
 _BANNED_REPEAT_INFRINGERS = set()
 
+
+def _require_admin(authorization: Optional[str]) -> None:
+    """Fails closed when ADMIN_API_TOKEN is unset, so content removal can never be anonymous."""
+    expected = os.environ.get("ADMIN_API_TOKEN", "")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Content administration is disabled. Set ADMIN_API_TOKEN to enable it.",
+        )
+    if not hmac.compare_digest(authorization or "", f"Bearer {expected}"):
+        raise HTTPException(status_code=401, detail="Unauthorized administration request.")
+
+
 @app.post("/api/v1/dmca/takedown", tags=["DMCA Safe Harbor"])
-async def process_dmca_takedown(payload: DMCATakedownRequest):
+async def process_dmca_takedown(
+    payload: DMCATakedownRequest,
+    authorization: Optional[str] = Header(None),
+):
     """
     DMCA § 512(c) expedited content removal endpoint.
     Immediately disables or removes alleged infringing content upon notice.
     """
+    _require_admin(authorization)
     logger.warning("Processing DMCA takedown notice for %s %s from %s", payload.item_type, payload.item_id, payload.complaining_party)
     global _DEFAULT_VOCABULARY
     if payload.item_type == "vocabulary":
@@ -195,11 +232,15 @@ async def process_dmca_takedown(payload: DMCATakedownRequest):
     }
 
 @app.post("/api/v1/dmca/ban_user", tags=["DMCA Safe Harbor"])
-async def ban_repeat_infringer(payload: DMCABanRequest):
+async def ban_repeat_infringer(
+    payload: DMCABanRequest,
+    authorization: Optional[str] = Header(None),
+):
     """
     DMCA § 512(i) repeat infringer policy enforcement endpoint.
     Permanently bans accounts or users found to repeatedly infringe intellectual property.
     """
+    _require_admin(authorization)
     if payload.infringement_count < 2:
         raise HTTPException(status_code=400, detail="Repeat infringer status requires at least 2 substantiated violations.")
     _BANNED_REPEAT_INFRINGERS.add(payload.user_id)

@@ -1,8 +1,10 @@
 import unittest
 import numpy as np
+import mediapipe as mp
 from hand_tracker import HandTracker, HandValidationResult, HandInfo
 
 
+@unittest.skipUnless(hasattr(mp, "solutions"), "MediaPipe mp.solutions requires Python <=3.12")
 class HandTrackerTests(unittest.TestCase):
     def setUp(self):
         self.tracker = HandTracker(

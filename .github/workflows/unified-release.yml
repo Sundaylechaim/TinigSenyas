@@ -17,10 +17,63 @@ env:
 
 jobs:
   # -------------------------------------------------------------
+  # Job 0a: Frontend gate - static analysis and tests
+  # -------------------------------------------------------------
+  test-frontend:
+    name: Test Flutter App
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install Dependencies
+        working-directory: frontend
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: frontend
+        run: flutter analyze --fatal-infos --fatal-warnings
+
+      - name: Run Tests
+        working-directory: frontend
+        run: flutter test
+
+  # -------------------------------------------------------------
+  # Job 0b: Backend gate - installable dependencies and tests
+  # -------------------------------------------------------------
+  test-backend:
+    name: Test Python Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # mediapipe publishes no cp313 wheel for the pinned range, so 3.12 is the ceiling.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Run Tests
+        working-directory: backend
+        run: python -m unittest discover -s . -p "test_*.py"
+
+  # -------------------------------------------------------------
   # Job 1: Build Android APK
   # -------------------------------------------------------------
   build-android:
     name: Build Android APK
+    needs: [test-frontend, test-backend]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -42,14 +95,17 @@ jobs:
         working-directory: frontend
         run: flutter pub get
 
-      - name: Build Release APK
+      # A universal APK bundles 4 ABIs and measured 198 MB; per-ABI builds are ~55 MB.
+      - name: Build Release APKs (per ABI)
         working-directory: frontend
-        run: flutter build apk --release
+        run: flutter build apk --release --target-platform android-arm64
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/app/outputs/flutter-apk/TinigSenyas-Android.apk
 
-      - name: Prepare Android Binary
+      - name: Prepare Android Binaries
         run: |
           mkdir -p dist
-          cp frontend/build/app/outputs/flutter-apk/app-release.apk dist/TinigSenyas-Android.apk
+          cp frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/TinigSenyas-Android-arm64.apk
+          cp frontend/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/TinigSenyas-Android-armv7.apk
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
@@ -62,6 +118,7 @@ jobs:
   # -------------------------------------------------------------
   build-ios:
     name: Build iOS IPA (Cloud Mac)
+    needs: [test-frontend, test-backend]
     runs-on: macos-latest
     steps:
       - name: Checkout Repository
@@ -194,7 +251,8 @@ jobs:
         with:
           body_path: release_body.md
           files: |
-            release_assets/TinigSenyas-Android.apk
+            release_assets/TinigSenyas-Android-arm64.apk
+            release_assets/TinigSenyas-Android-armv7.apk
             release_assets/TinigSenyas-iOS.ipa
             release_assets/TinigSenyas-iOS-Simulator.zip
             release_assets/source.json

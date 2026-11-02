@@ -30,10 +30,22 @@ if (-not (Test-Path $apkFile)) {
 
 if (Test-Path $apkFile) {
     $namedApk = Join-Path $outputDir "tinigsenyas.apk"
-    Copy-Item -Path $apkFile -Destination $namedApk -Force
+    if ($apkFile -ne $namedApk) {
+        Copy-Item -Path $apkFile -Destination $namedApk -Force
+    }
+
+    # Clean up all intermediate/split files so users only see the single official APK
+    Get-ChildItem -Path $outputDir -Exclude "tinigsenyas.apk" | Remove-Item -Force
+
+    # Also copy to workspace root for quick access
+    $workspaceRoot = Split-Path -Parent $scriptDir
+    $rootApk = Join-Path $workspaceRoot "tinigsenyas.apk"
+    Copy-Item -Path $namedApk -Destination $rootApk -Force
+
     Write-Host "`n[3/3] Build Successful!" -ForegroundColor Green
-    Write-Host "APK Location: $namedApk" -ForegroundColor Green
-    Write-Host "`nOpening output folder in Explorer... Distribute 'tinigsenyas.apk' to your users!" -ForegroundColor Cyan
+    Write-Host "Single Android Release APK: $namedApk" -ForegroundColor Green
+    Write-Host "Desktop Root Location:      $rootApk" -ForegroundColor Green
+    Write-Host "`nOpening folder... Hand 'tinigsenyas.apk' directly to Android users!" -ForegroundColor Cyan
     explorer.exe /select,$namedApk
 } else {
     Write-Host "`nBuild completed, but APK not found at expected path: $apkFile" -ForegroundColor Red

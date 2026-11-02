@@ -3,8 +3,8 @@
 **Project Title:** TinigSenyas: Filipino Sign Language (FSL) Translation & E-Learning Module  
 **Institution:** Eulogio "Amang" Rodriguez Institute of Science and Technology (EARIST)  
 **Community Partner:** KAINAKAP Inclusive and Opportunity Inc.  
-**Model Checkpoint:** `best_fsl_model.keras` / `fsl_model.tflite`  
-**Vocabulary Capacity:** 127 FSL Classes (Letters A–Z, Numbers, and Transactional Phrases)
+**Model Checkpoint:** `best_fsl_model.keras` (103 outputs) → quantized as the shipped `fsl_model.tflite`
+**Vocabulary Capacity:** 103 transactional FSL classes in the deployed model, plus a separate 26-class fingerspelling head (`fsl_alphabet.tflite`). The older `fsl_model.keras` checkpoint has a 127-class output layer and is retained for history only - it is not the model running in the app.
 
 ---
 
@@ -47,7 +47,7 @@ TinigSenyas implements an end-to-end computer vision and deep learning pipeline 
 |                    5. ST-GCN Deep Neural Network Inference                        |
 |      - Graph Convolutions: Spatial adjacency matrix across skeletal connections   |
 |      - Temporal 1D Convolutions: Trajectory and kinematic tracking                |
-|      - Classification Head: Dense Softmax across 127 FSL classes                  |
+|      - Classification Head: Dense Softmax across 103 FSL classes                  |
 +-----------------------------------------------------------------------------------+
                                          |
                                          v
@@ -92,7 +92,7 @@ This preserves internal finger orientations (e.g., thumb facing inward) while ma
 
 ## 3. Neural Network Architecture (ST-GCN)
 
-The core architecture stored in [`best_fsl_model.keras`](file:///c:/Users/Jebi/Desktop/TinigSenyas/TinigSenyas/backend/models/best_fsl_model.keras) utilizes a custom `TFLiteGraphConv` layer optimized for edge execution.
+The core architecture stored in [`backend/models/best_fsl_model.keras`](../backend/models/best_fsl_model.keras) utilizes a custom `TFLiteGraphConv` layer optimized for edge execution.
 
 ### Model Layer Breakdown
 
@@ -107,7 +107,7 @@ The core architecture stored in [`best_fsl_model.keras`](file:///c:/Users/Jebi/D
 | **TFLiteGraphConv 3** | Out Channels = 128, Spatial Adjacency $A$ | `(None, 30, 75, 128)` | Global dynamic signing representations |
 | **Global Average Pool** | Spatial-Temporal pooling | `(None, 128)` | Collapse temporal and joint dimensions |
 | **Dropout** | Rate = 0.30 | `(None, 128)` | Prevents overfitting |
-| **Dense (Output)** | Units = 127, Activation = Softmax | `(None, 127)` | Normalized class probabilities |
+| **Dense (Output)** | Units = 103, Activation = Softmax | `(None, 103)` | Normalized class probabilities |
 
 ### Spatial Graph Convolution Formulation
 For each frame $t$, joint features $\mathbf{X}_t \in \mathbb{R}^{V \times C_{\text{in}}}$ are propagated according to the normalized adjacency matrix $\tilde{\mathbf{A}}$:

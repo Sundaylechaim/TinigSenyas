@@ -1,4 +1,7 @@
+import os
 import unittest
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 from server import app
 
@@ -52,10 +55,21 @@ class ServerEndpointTests(unittest.TestCase):
             "infringing_url_or_label": "salamat",
             "signature": "John Doe",
         }
-        response = self.client.post("/api/v1/dmca/takedown", json=payload)
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "content_removed")
+        with patch.dict(os.environ, {"ADMIN_API_TOKEN": "test-admin-token"}):
+            rejected = self.client.post("/api/v1/dmca/takedown", json=payload)
+            self.assertEqual(rejected.status_code, 401)
+
+            response = self.client.post(
+                "/api/v1/dmca/takedown",
+                json=payload,
+                headers={"Authorization": "Bearer test-admin-token"},
+            )
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["status"], "content_removed")
+
+        disabled = self.client.post("/api/v1/dmca/takedown", json=payload)
+        self.assertEqual(disabled.status_code, 503)
 
     def test_dmca_ban_repeat_infringer(self):
         payload = {
@@ -63,10 +77,15 @@ class ServerEndpointTests(unittest.TestCase):
             "infringement_count": 3,
             "reason": "Multiple substantiated DMCA copyright takedown notices",
         }
-        response = self.client.post("/api/v1/dmca/ban_user", json=payload)
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertEqual(data["status"], "user_banned")
+        with patch.dict(os.environ, {"ADMIN_API_TOKEN": "test-admin-token"}):
+            response = self.client.post(
+                "/api/v1/dmca/ban_user",
+                json=payload,
+                headers={"Authorization": "Bearer test-admin-token"},
+            )
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["status"], "user_banned")
 
     def test_predict_frame_endpoint(self):
         import cv2

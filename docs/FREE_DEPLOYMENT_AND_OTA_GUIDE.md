@@ -7,7 +7,7 @@
 
 ## Table of Contents
 1. [Android Free Distribution (Google Drive)](#1-android-free-distribution-google-drive)
-2. [iOS Free Distribution (PWA & Sideloading)](#2-ios-free-distribution-pwa--sideloading)
+2. [iOS Free Distribution (Sideloading)](#2-ios-free-distribution-sideloading)
 3. [Offline-First Architecture Guarantee](#3-offline-first-architecture-guarantee)
 4. [Over-The-Air (OTA) Updates Workflow](#4-over-the-air-ota-updates-workflow)
 5. [Quick Build Scripts](#5-quick-build-scripts)
@@ -22,17 +22,33 @@ Android allows direct installation of APKs ("sideloading") without any store fee
 Open PowerShell in `TinigSenyas/frontend` and run:
 
 ```powershell
-# Option A: Universal APK (runs on all Android phones, ~70MB)
+# Option A: Universal APK (runs on all Android phones, but bundles 4 ABIs)
 flutter build apk --release
 
-# Option B: Optimized Split APKs (RECOMMENDED, ~35MB each)
+# Option B: Optimized Split APKs (RECOMMENDED)
 flutter build apk --split-per-abi
 ```
 
-When building split APKs, Flutter creates 3 files in `frontend/build/app/outputs/flutter-apk/`:
+Measured from the current build (release mode, no R8 minification):
+
+| Build | Size |
+| :--- | :--- |
+| Universal `app-release.apk` | **198.4 MB** |
+| `app-arm64-v8a-release.apk` | **78.1 MB** |
+| `app-armeabi-v7a-release.apk` | **62.4 MB** |
+| `app-x86_64-release.apk` | 87.5 MB (emulators / Intel Chromebooks only) |
+
+Always distribute the per-ABI builds - the universal APK is more than twice the size
+because it carries `libonnxruntime`, MediaPipe, and LiteRT natives for every architecture.
+
+> **Pick one ABI per tester and stay on it.** Split builds are stamped with a different `versionCode` per architecture (arm64 2001, armv7 1001, x86_64 4001 for a pubspec `1.0.0+1`), because Android encodes the ABI in the version code. A phone that installed the arm64 build refuses the armv7 build as a downgrade, and the same applies to every future release: bump `version: x.y.z+N` in `pubspec.yaml` so each new upload is higher than the last, and tell testers which single file to use.
+
+When building split APKs, Flutter creates the files above in `frontend/build/app/outputs/flutter-apk/`:
 - `app-arm64-v8a-release.apk` *(Use this! Covers 90%+ of modern Android phones)*
 - `app-armeabi-v7a-release.apk` *(For older 32-bit Android phones)*
 - `app-x86_64-release.apk` *(For emulators / Intel Chromebooks)*
+
+> **Signing:** without `frontend/android/key.properties`, release builds are signed with Flutter's debug key. That is fine for tester sideloads, but every tester must uninstall the old build whenever you switch keys, and debug-signed APKs cannot go on Google Play or upgrade in place across releases. Create a keystore and add `key.properties` (already gitignored) for a stable release signature.
 
 ### Step 2: Upload to Google Drive
 1. Create a dedicated folder in Google Drive (e.g., `TinigSenyas Releases`).
@@ -53,24 +69,13 @@ Provide these 4 simple steps to your testers:
 
 ---
 
-## 2. iOS Free Distribution (PWA & Sideloading)
+## 2. iOS Free Distribution (Sideloading)
 
-Apple does not permit direct `.ipa` downloads through Google Drive without cryptographic developer signing. Here are the two 100% free paths:
+Apple does not permit direct `.ipa` downloads through Google Drive without cryptographic developer signing.
 
-### Method A: Progressive Web App / PWA (Zero Install Friction — Recommended)
-Since TinigSenyas supports Flutter Web, iPhone users can run it as an installed app icon on their home screen without any Mac or certificate:
+> **⚠️ The PWA route is not currently available.** This guide previously recommended hosting the Flutter web build so iPhone users could "Add to Home Screen" without a Mac or certificate. That does not work today: `flutter build web` fails to compile because `tflite_flutter` and `sherpa_onnx` require `dart:ffi`, which the web target does not support. There is no browser deployment of TinigSenyas until those dependencies are isolated behind conditional imports or replaced. Sideloading the native build is the only free iPhone path.
 
-1. **Host the Web Version for Free**:
-   - Build web: `flutter build web --release`
-   - Host the `frontend/build/web` folder on **GitHub Pages**, **Vercel**, or **Firebase Hosting** (all free).
-2. **User Installation on iPhone**:
-   - Open Safari and navigate to your hosted URL.
-   - Tap the **Share icon** (square with an upward arrow at the bottom).
-   - Scroll down and tap **"Add to Home Screen"**.
-   - Tap **Add** in the top-right corner.
-3. **Result**: An app icon appears on their iPhone home screen. When launched, it runs full-screen (without browser URLs or navigation bars) and caches assets offline.
-
-### Method B: Sideloading the Native .IPA via Sideloadly (Free Apple ID)
+### Method A: Sideloading the Native .IPA via Sideloadly (Free Apple ID)
 If testers require the native iOS app:
 1. Build the archive on a Mac:
    ```bash
@@ -95,7 +100,7 @@ TinigSenyas is architected to be **100% usable without internet**:
 | :--- | :--- | :--- |
 | **Sign-to-Text** | On-device machine learning inference runs locally via camera stream. Zero server calls. | Can download new gesture weights over the air. |
 | **Speech-to-Text** | On-device speech recognition via OS speech packs. | Cloud-assisted transcription if connected. |
-| **Text-to-Speech** | Native device speech engine (`flutter_tts`) and pre-downloaded Sherpa-ONNX offline voice. | High-definition cloud TTS server fallback. |
+| **Text-to-Speech** | Native device speech engine (`flutter_tts`). The Sherpa-ONNX English voice is **not** bundled - the tester downloads a 147 MB model once, on demand, and it then works offline. | High-definition cloud TTS server fallback. |
 | **History & Chats** | Local SQLite database (`DatabaseHelper`) stored inside the device's internal storage sandbox. | History CSV export. |
 | **Network State** | `ConnectivityService` detects disconnection immediately and prevents any freezing or unhandled network crashes. | `ConnectivityBadge` displays current status. |
 
@@ -121,14 +126,22 @@ When you retrain the FSL recognition model or add new sign vocabulary:
 3. Inside the app, members go to **Settings** $\rightarrow$ **Model** $\rightarrow$ tap **"Check for Model Updates (OTA)"**.
 4. The app streams the download, verifies the SHA-256 checksum, saves it locally, and hot-swaps the model without restarting the app!
 
+> **The `sha256` must be a real digest of the exact file at `url`.** The app refuses to install a model whose checksum does not match, so a placeholder value silently disables OTA for every tester. Regenerate it after every retrain:
+> ```powershell
+> # PowerShell
+> (Get-FileHash .\fsl_model.tflite -Algorithm SHA256).Hash.ToLower()
+> ```
+> Then publish the model as a GitHub Release asset named `fsl_model.tflite` and set the backend's `OTA_MODEL_URL`, `OTA_MODEL_SHA256`, and `OTA_MODEL_VERSION` (see `backend/README.md`). `frontend/assets/model/manifest.json` - the fallback used when no server URL is configured - must carry the same values.
+> An update is only offered when `version` is strictly greater than the version already stored on the device, so bumping the model file without bumping `version` does nothing.
+
 ### Layer 2: App Code Updates (Version 2.0 APK)
 When you add new UI screens or major features:
 1. Bump `version: 1.0.1+2` in `frontend/pubspec.yaml`.
-2. Build the new release APK:
+2. Build the new release APKs:
    ```powershell
-   flutter build apk --release
+   flutter build apk --release --split-per-abi
    ```
-3. Upload `app-release.apk` to the same Google Drive folder.
+3. Upload `app-arm64-v8a-release.apk` (and `app-armeabi-v7a-release.apk` for older phones) to the same Google Drive folder.
 4. Tell users to download and tap install.
 5. **Data Safety**: Android automatically installs the update over the existing app. **All translation history, user preferences, and local models are preserved safely in SQLite**.
 
@@ -152,9 +165,12 @@ Run from `frontend`:
 ```
 
 This runs GitHub Actions runners in parallel:
-- **Android Runner**: Compiles `TinigSenyas-Android.apk`.
+- **Test Gate**: `flutter analyze`, `flutter test`, and the backend `unittest` suite must pass before any artifact is built.
+- **Android Runner**: Compiles `TinigSenyas-Android-arm64.apk` and `TinigSenyas-Android-armv7.apk` (per-ABI, so each stays well under the universal build's size).
 - **macOS Runner (unmac)**: Compiles `TinigSenyas-iOS.ipa` and `TinigSenyas-iOS-Simulator.zip`.
 - **Unified Release Publisher**: Combines both platforms into a single GitHub Release.
+
+> The CI-built APK is signed with Flutter's **debug key** until you add a real keystore. To produce a Play-ready or upgrade-stable build, create `frontend/android/key.properties` (gitignored) pointing at a `.jks` keystore - `app/build.gradle.kts` picks it up automatically and falls back to debug when it is absent.
 
 ### Unified Download Page:
 A device-detecting download portal is available at `docs/index.html`. When opened on any smartphone:

@@ -41,13 +41,39 @@ Once the backend is running, open your browser to view the interactive documenta
 
 ---
 
+## Configuration (Environment Variables)
+
+All deployment settings are read from the environment; a local `.env` file next to
+`server.py` is loaded automatically by `python-dotenv`. Nothing here is required to boot
+the API, but the defaults are for single-machine development only.
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `TTS_API_TOKEN` | *(unset)* | Bearer token for `POST /tts/synthesize`. **Required for any non-local client** - native mobile apps send no `Origin` header, so without this token every remote app request is rejected with 401 and the launcher appears to hang on "speaking". |
+| `TTS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call TTS when no token is configured. Applies to browsers only. |
+| `APP_ALLOWED_ORIGINS` | *(empty)* | Comma-separated origins added to the API's CORS allow-list. localhost is always permitted; a hosted frontend **must** be listed here or its preflight requests are blocked. |
+| `ADMIN_API_TOKEN` | *(unset)* | Bearer token for `POST /api/v1/dmca/takedown` and `/api/v1/dmca/ban_user`. When unset those endpoints answer 503 rather than accepting anonymous content removal. |
+| `OTA_MODEL_URL` | this repo's `releases/latest/download/fsl_model.tflite` | Where installed apps download a newer model. |
+| `OTA_MODEL_SHA256` | hash of the bundled `fsl_model.tflite` | Integrity check the app verifies before installing. Must be regenerated (`sha256sum`) whenever the model changes. |
+| `OTA_MODEL_VERSION` | `1.0.1` | Only offer an update when this is newer than the version stored on the device. |
+| `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | *(unset)* | Enables the Azure Cognitive Services fallback; without both, Edge-TTS is used. |
+| `APP_BASE_URL` / `PHYSICAL_POSTAL_ADDRESS` | `https://tinigsenyas.org` | CAN-SPAM footer values in `email_service.py`. |
+
+Note that `video_feed` and `predict_frame` open `cv2.VideoCapture(0)` **on the machine
+running the API**. Hosting this on a serverless or container platform gives you no camera
+device, so those endpoints only work on the demonstration laptop itself.
+
+---
+
 ## How to Run Locally
 
 ### Option A: Via the Web Launcher
-From the repository root, start both the FastAPI backend and Flutter web application:
+From the repository root, start the FastAPI backend and the Flutter application:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\frontend\run_web.ps1
 ```
+This currently targets Chrome, and the web build does not compile (`tflite_flutter` and
+`sherpa_onnx` need `dart:ffi`). Run the app on an Android device or emulator instead.
 
 ### Option B: Directly with Uvicorn
 From the `backend` folder:
@@ -59,6 +85,7 @@ uvicorn server:app --host 0.0.0.0 --port 5000 --reload
 ---
 
 ## Running Automated Tests
+Requires a Python 3.10-3.12 environment with `requirements.txt` installed. Runs on the standard library, so no extra package is needed.
 ```powershell
-.\.venv\Scripts\python.exe -m unittest test_tts_api.py
+.\.venv\Scripts\python.exe -m unittest discover -s . -p "test_*.py"
 ```
