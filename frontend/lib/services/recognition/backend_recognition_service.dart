@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:dio/dio.dart';
 import 'package:tinigsenyas/models/sign_result.dart';
@@ -35,6 +36,14 @@ class BackendRecognitionService implements RecognitionService {
   bool _isInitialized = false;
   bool _isRunning = false;
   bool _isPaused = false;
+  RecognitionMode _mode = RecognitionMode.auto;
+
+  @override
+  RecognitionMode get mode => _mode;
+
+  @override
+  set mode(RecognitionMode value) => _mode = value;
+
   String? _lastEmittedLabel;
   DateTime _lastEmittedTime = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -177,7 +186,23 @@ class BackendRecognitionService implements RecognitionService {
   }
 
   @override
-  Future<void> processFrame(CameraImage image) async {
+  Stream<List<List<Offset>>>? get landmarkPointsStream => _progressController.stream.map((p) {
+        return p.handLandmarks.map((hand) {
+          return hand.map((pt) => Offset(pt.isNotEmpty ? pt[0] : 0.0, pt.length > 1 ? pt[1] : 0.0)).toList();
+        }).toList();
+      });
+
+  @override
+  Future<void> reloadModels() async {
+    // Backend service automatically uses server-side updated weights
+  }
+
+  @override
+  Future<void> processFrame(
+    CameraImage image, {
+    int? sensorOrientation,
+    bool? isFrontCamera,
+  }) async {
     // Processed on camera feed
   }
 

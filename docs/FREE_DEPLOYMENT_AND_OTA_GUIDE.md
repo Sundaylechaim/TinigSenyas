@@ -143,12 +143,12 @@ Whenever you want to build a local Android release, simply right-click it and se
 
 ## 6. Unified Cloud CI/CD Release (Android + iOS Together)
 
-Instead of building manually on local machines, the project now includes a **Unified GitHub Actions Pipeline** (`.github/workflows/unified-release.yml`) and **One-Click Trigger Script** (`trigger_release.ps1`).
+Instead of building manually from scratch every time, the project includes a dedicated build script (`frontend/build_android_apk.ps1`).
 
-### How to Trigger Both Builds:
-Run from the root of `TinigSenyas`:
+### How to Build the Release APK:
+Run from `frontend`:
 ```powershell
-.\trigger_release.ps1
+.\build_android_apk.ps1
 ```
 
 This runs GitHub Actions runners in parallel:

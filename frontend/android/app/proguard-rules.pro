@@ -18,3 +18,7 @@
 -dontwarn okhttp3.**
 -dontwarn okio.**
 
+# Google Play Core (Flutter deferred components)
+-dontwarn com.google.android.play.core.**
+
+

@@ -557,12 +557,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             trailing: const Icon(Icons.cloud_download_outlined),
             onTap: () {
               final messenger = ScaffoldMessenger.of(context);
+              final serverUrl = _settingsService.ttsServerUrl;
+              final otaManifestUrl = serverUrl.isNotEmpty
+                  ? '$serverUrl/api/v1/ota/manifest'
+                  : 'https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/manifest.json';
+              final updater = ModelUpdater(remoteManifestUrl: otaManifestUrl);
               showDialog(
                 context: context,
                 builder: (context) => ModelUpdateDialog(
-                  modelUpdater: ModelUpdater(),
+                  modelUpdater: updater,
                   onUpdateComplete: () async {
-                    final newVersion = await ModelUpdater().getInstalledVersion();
+                    final newVersion = await updater.getInstalledVersion();
                     if (!mounted) return;
                     setState(() {
                       _modelVersion = newVersion;

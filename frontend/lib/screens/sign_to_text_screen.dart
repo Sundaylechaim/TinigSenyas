@@ -13,9 +13,12 @@ import '../services/database_helper.dart';
 import '../models/sign_result.dart';
 import '../widgets/camera_preview.dart';
 import '../widgets/signing_space_overlay.dart';
+import '../widgets/hand_landmark_overlay.dart';
 import '../widgets/connectivity_badge.dart';
 import '../services/word_prediction_service.dart';
 import '../services/settings_service.dart';
+import '../services/model_updater.dart';
+import '../services/recognition/recognition_service.dart' show RecognitionMode;
 
 const Color _kAppBlue = Color(0xFF0138FF);
 const Color _kAppYellow = Color(0xFFFFC801);
@@ -46,6 +49,40 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   StreamSubscription<SignResult>? _predictionSubscription;
   StreamSubscription<bool>? _pauseSubscription;
   StreamSubscription<CameraImage>? _frameSubscription;
+  StreamSubscription<List<List<Offset>>>? _landmarksSubscription;
+  List<List<Offset>> _liveLandmarks = [];
+  bool _isCheckingModelUpdate = false;
+  RecognitionMode _currentMode = RecognitionMode.auto;
+
+  void _cycleRecognitionMode() {
+    setState(() {
+      switch (_currentMode) {
+        case RecognitionMode.auto:
+          _currentMode = RecognitionMode.phrases;
+          break;
+        case RecognitionMode.phrases:
+          _currentMode = RecognitionMode.alphabet;
+          break;
+        case RecognitionMode.alphabet:
+          _currentMode = RecognitionMode.auto;
+          break;
+      }
+    });
+    _recognitionProvider?.setMode(_currentMode);
+    final modeLabel = _currentMode == RecognitionMode.phrases
+        ? 'Phrases (Kamusta/Hello, Salamat, etc.)'
+        : _currentMode == RecognitionMode.alphabet
+            ? 'Alphabet (A to Z Letters)'
+            : 'Auto (Phrases & Alphabet)';
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Mode: $modeLabel'),
+        duration: const Duration(milliseconds: 1200),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   // Smart Word Assembler & Intent Prediction State
   final WordPredictionService _wordPredictionService = WordPredictionService();
@@ -90,6 +127,17 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
           }
         });
       }
+    });
+
+    _landmarksSubscription = _recognitionProvider?.landmarkPointsStream?.listen((hands) {
+      if (mounted) {
+        setState(() => _liveLandmarks = hands);
+      }
+    });
+
+    // Check for Google Maps style background model OTA updates if connected
+    Future.delayed(const Duration(seconds: 4), () {
+      if (mounted) _checkForOtaModelUpdates();
     });
 
     if (kIsWeb) {
@@ -398,8 +446,14 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   void _processFrame(CameraImage image) {
     if (_isProcessingFrame || _recognitionProvider == null) return;
     _isProcessingFrame = true;
+    final orientation = _cameraService.selectedCamera?.sensorOrientation;
+    final isFrontCamera = _cameraService.selectedCamera?.lensDirection == CameraLensDirection.front;
     _recognitionProvider!
-        .processFrame(image)
+        .processFrame(
+          image,
+          sensorOrientation: orientation,
+          isFrontCamera: isFrontCamera,
+        )
         .then((_) {
           if (mounted && _recognitionError != null) {
             setState(() => _recognitionError = null);
@@ -412,17 +466,51 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
         .whenComplete(() => _isProcessingFrame = false);
   }
 
-  Future<void> _speakCurrentPrediction() async {
-    if (_currentPrediction != null) {
-      try {
-        await _ttsService.speak(_currentPrediction!.label);
-      } catch (error) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not play speech: $error')),
-          );
-        }
+  Future<void> _checkForOtaModelUpdates() async {
+    if (_isCheckingModelUpdate) return;
+    _isCheckingModelUpdate = true;
+    try {
+      final serverUrl = context.read<SettingsService>().ttsServerUrl;
+      final remoteManifest = serverUrl.isNotEmpty ? '$serverUrl/api/v1/ota/manifest' : null;
+      final updater = ModelUpdater(remoteManifestUrl: remoteManifest);
+      final updateInfo = await updater.checkForUpdates();
+      if (updateInfo.status == UpdateStatus.updateAvailable && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('New FSL Model Available (${updateInfo.version}). Tap to install.'),
+            duration: const Duration(seconds: 8),
+            action: SnackBarAction(
+              label: 'UPDATE',
+              onPressed: () async {
+                await for (final progress in updater.downloadUpdate(updateInfo)) {
+                  if (progress.status == UpdateStatus.downloading && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Downloading updated model: ${(progress.progress * 100).toInt()}%'),
+                        duration: const Duration(milliseconds: 600),
+                      ),
+                    );
+                  } else if (progress.status == UpdateStatus.upToDate && mounted) {
+                    await _recognitionProvider?.reloadModels();
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('FSL Model updated successfully!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  }
+                }
+              },
+            ),
+          ),
+        );
       }
+    } catch (_) {
+      // Ignore background update check failures
+    } finally {
+      _isCheckingModelUpdate = false;
     }
   }
 
@@ -530,18 +618,92 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
 
   void _clearSentence() {
     HapticFeedback.selectionClick();
+    final prevWord = _activeWordBuffer;
+    final prevSentence = _composedSentence;
+
+    if (prevWord.isEmpty && prevSentence.isEmpty) return;
+
     setState(() {
       _activeWordBuffer = '';
       _composedSentence = '';
       _suggestedWords = [];
       _lastAppendedLetter = null;
     });
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Sentence cleared'),
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'UNDO',
+          textColor: _kAppYellow,
+          onPressed: () {
+            setState(() {
+              _activeWordBuffer = prevWord;
+              _composedSentence = prevSentence;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  void _copyToClipboard() {
+    HapticFeedback.mediumImpact();
+    final text = _composedSentence.isNotEmpty
+        ? (_activeWordBuffer.isNotEmpty ? '$_composedSentence $_activeWordBuffer' : _composedSentence)
+        : (_activeWordBuffer.isNotEmpty ? _activeWordBuffer : (_currentPrediction?.label ?? ''));
+
+    if (text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nothing to copy yet. Sign a word or letter first!'),
+          duration: Duration(milliseconds: 1200),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    Clipboard.setData(ClipboardData(text: text.trim()));
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Copied "$text" to clipboard!')),
+          ],
+        ),
+        duration: const Duration(milliseconds: 1500),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _toggleManualPause() {
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _isPaused = !_isPaused;
+    });
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_isPaused ? '⏸️ Recognition paused' : '▶️ Recognition resumed'),
+        duration: const Duration(milliseconds: 900),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _speakComposedSentence() async {
     final textToSpeak = _composedSentence.isNotEmpty
         ? (_activeWordBuffer.isNotEmpty ? '$_composedSentence $_activeWordBuffer' : _composedSentence)
-        : _activeWordBuffer;
+        : (_activeWordBuffer.isNotEmpty ? _activeWordBuffer : (_currentPrediction?.label ?? ''));
 
     if (textToSpeak.trim().isNotEmpty) {
       HapticFeedback.mediumImpact();
@@ -562,6 +724,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     WidgetsBinding.instance.removeObserver(this);
     _predictionSubscription?.cancel();
     _pauseSubscription?.cancel();
+    _landmarksSubscription?.cancel();
     _frameSubscription?.cancel();
     _cameraService.dispose();
     final recognitionProvider = _recognitionProvider;
@@ -1223,6 +1386,21 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
         CameraPreviewWidget(
           cameraService: _cameraService,
         ),
+        Builder(
+          builder: (context) {
+            final controller = _cameraService.controller;
+            final isRotated = !kIsWeb && MediaQuery.of(context).orientation == Orientation.portrait;
+            final previewSize = controller?.value.previewSize;
+            final pw = isRotated ? (previewSize?.height.toInt() ?? 480) : (previewSize?.width.toInt() ?? 640);
+            final ph = isRotated ? (previewSize?.width.toInt() ?? 640) : (previewSize?.height.toInt() ?? 480);
+            return HandLandmarkOverlay(
+              hands: _liveLandmarks,
+              frameWidth: pw,
+              frameHeight: ph,
+              mirror: false,
+            );
+          },
+        ),
         const SigningSpaceOverlay(),
         Positioned(
           top: topPadding,
@@ -1524,125 +1702,113 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       ),
                     ),
                   ),
-                  if (isPaused)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD97706),
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFFD97706).withValues(alpha: 0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isPaused)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD97706),
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                        ],
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.pause_rounded, size: 14, color: Colors.white),
+                              SizedBox(width: 4),
+                              Text(
+                                'PAUSED',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 11,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else if (hasPrediction && isReady)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: isConfidenceHigh
+                                ? const Color(0xFF10B981)
+                                : (confidence >= 0.60 ? _kAppBlue : _kAppYellow),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isConfidenceHigh ? Icons.verified_rounded : Icons.trending_up_rounded,
+                                size: 13,
+                                color: (isConfidenceHigh || confidence >= 0.60) ? Colors.white : const Color(0xFF111827),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${(confidence * 100).toInt()}%',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                  color: (isConfidenceHigh || confidence >= 0.60) ? Colors.white : const Color(0xFF111827),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const SizedBox(width: 6),
+                      IconButton(
+                        icon: Icon(
+                          isPaused ? Icons.play_circle_fill_rounded : Icons.pause_circle_outline_rounded,
+                          color: isPaused ? const Color(0xFF10B981) : (isDark ? Colors.white70 : const Color(0xFF64748B)),
+                          size: 24,
+                        ),
+                        tooltip: isPaused ? 'Resume recognition' : 'Pause recognition',
+                        constraints: const BoxConstraints(),
+                        padding: EdgeInsets.zero,
+                        onPressed: _toggleManualPause,
                       ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.pause_rounded, size: 14, color: Colors.white),
-                          SizedBox(width: 4),
-                          Text(
-                            'PAUSED',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 12,
-                              color: Colors.white,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  else if (hasPrediction && isReady)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: isConfidenceHigh
-                            ? const Color(0xFF10B981)
-                            : (confidence >= 0.60 ? _kAppBlue : _kAppYellow),
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: (isConfidenceHigh ? const Color(0xFF10B981) : _kAppYellow).withValues(alpha: 0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            isConfidenceHigh ? Icons.verified_rounded : Icons.trending_up_rounded,
-                            size: 14,
-                            color: (isConfidenceHigh || confidence >= 0.60) ? Colors.white : const Color(0xFF111827),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${(confidence * 100).toInt()}%',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 13,
-                              color: (isConfidenceHigh || confidence >= 0.60) ? Colors.white : const Color(0xFF111827),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    ],
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  if (hasPrediction && isReady) ...[
-                    _ActionButton(
-                      icon: Icons.volume_up_rounded,
-                      label: 'Speak',
-                      tooltip: 'Pronounce sign in Filipino voice',
-                      semanticLabel: 'Speak recognized sign aloud',
-                      onPressed: _speakCurrentPrediction,
-                      color: _kAppBlue,
-                    ),
-                    _ActionButton(
-                      icon: Icons.bookmark_add_rounded,
-                      label: 'Save',
-                      tooltip: 'Save sign to history',
-                      semanticLabel: 'Save sign to history',
-                      onPressed: _saveCurrentPrediction,
-                      color: _kAppYellow,
-                    ),
-                    _ActionButton(
-                      icon: Icons.replay_rounded,
-                      label: 'Repeat',
-                      tooltip: 'Replay voice translation',
-                      semanticLabel: 'Repeat spoken sign',
-                      onPressed: _speakCurrentPrediction,
-                      color: isDark ? Colors.white70 : const Color(0xFF475569),
-                    ),
-                  ] else if (!isReady) ...[
-                    Expanded(
-                      child: Text(
-                        'Initializing sign recognition model...',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                        ),
-                      ),
-                    ),
-                  ] else ...[
-                    _ActionButton(
-                      icon: Icons.menu_book_rounded,
-                      label: 'FSL Guide',
-                      tooltip: 'Open Filipino Sign Language gesture guide',
-                      semanticLabel: 'Open FSL gesture guide',
-                      onPressed: _showGuide,
-                      color: _kAppBlue,
-                    ),
-                  ],
+                  _ActionButton(
+                    icon: Icons.volume_up_rounded,
+                    label: 'Speak',
+                    tooltip: 'Pronounce sign or sentence',
+                    semanticLabel: 'Speak sign or sentence aloud',
+                    onPressed: _speakComposedSentence,
+                    color: _kAppBlue,
+                  ),
+                  _ActionButton(
+                    icon: Icons.copy_rounded,
+                    label: 'Copy',
+                    tooltip: 'Copy text to clipboard',
+                    semanticLabel: 'Copy text to clipboard',
+                    onPressed: _copyToClipboard,
+                    color: const Color(0xFF0D9488),
+                  ),
+                  _ActionButton(
+                    icon: Icons.bookmark_add_rounded,
+                    label: 'Save',
+                    tooltip: 'Save sign to history',
+                    semanticLabel: 'Save sign to history',
+                    onPressed: _saveCurrentPrediction,
+                    color: _kAppYellow,
+                  ),
+                  _ActionButton(
+                    icon: Icons.menu_book_rounded,
+                    label: 'FSL Guide',
+                    tooltip: 'Open FSL gesture guide and alphabet',
+                    semanticLabel: 'Open FSL gesture guide',
+                    onPressed: _showGuide,
+                    color: const Color(0xFF6366F1),
+                  ),
                 ],
               ),
             ],
@@ -1657,12 +1823,33 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     final isDark = theme.brightness == Brightness.dark;
     final isReady = _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final isPaused = _isPaused;
-    final message = _recognitionError ??
-        (isPaused
-            ? '⏸️ Reader Paused (Open Palm) — Lower hand to sign next word'
-            : isReady
-                ? 'FSL sign recognition is active'
-                : 'Initializing FSL sign model...');
+    final isTracking = _liveLandmarks.isNotEmpty && !isPaused;
+
+    final String message;
+    final IconData icon;
+    final Color iconColor;
+
+    if (_recognitionError != null) {
+      message = _recognitionError!;
+      icon = Icons.error_outline_rounded;
+      iconColor = Colors.white;
+    } else if (isPaused) {
+      message = '⏸️ Reader Paused • Lower hand to resume';
+      icon = Icons.pause_circle_rounded;
+      iconColor = Colors.white;
+    } else if (isTracking) {
+      message = '👋 Hand tracked • Signing active';
+      icon = Icons.front_hand_rounded;
+      iconColor = const Color(0xFF10B981); // Emerald Green
+    } else if (isReady) {
+      message = '✨ Ready • Raise hand in front of camera';
+      icon = Icons.videocam_rounded;
+      iconColor = _kAppBlue;
+    } else {
+      message = 'Initializing FSL sign engine...';
+      icon = Icons.hourglass_top_rounded;
+      iconColor = _kAppYellow;
+    }
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
@@ -1680,18 +1867,16 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
             border: Border.all(
               color: isPaused
                   ? const Color(0xFFFFC801).withValues(alpha: 0.6)
-                  : (isDark ? Colors.white12 : Colors.white60),
+                  : isTracking
+                      ? const Color(0xFF10B981).withValues(alpha: 0.5)
+                      : (isDark ? Colors.white12 : Colors.white60),
             ),
           ),
           child: Row(
             children: [
               Icon(
-                _recognitionError != null
-                    ? Icons.error_outline_rounded
-                    : isPaused
-                        ? Icons.pause_circle_rounded
-                        : Icons.videocam_rounded,
-                color: (_recognitionError != null || isPaused) ? Colors.white : _kAppBlue,
+                icon,
+                color: (_recognitionError != null || isPaused) ? Colors.white : iconColor,
                 size: 20,
               ),
               const SizedBox(width: 10),
@@ -1744,6 +1929,53 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                   ),
                 ),
               ],
+              const SizedBox(width: 6),
+              Semantics(
+                button: true,
+                label: 'Toggle sign recognition mode',
+                child: InkWell(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    _cycleRecognitionMode();
+                  },
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _kAppBlue.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: _kAppBlue.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _currentMode == RecognitionMode.phrases
+                              ? Icons.chat_bubble_outline_rounded
+                              : _currentMode == RecognitionMode.alphabet
+                                  ? Icons.spellcheck_rounded
+                                  : Icons.auto_mode_rounded,
+                          size: 15,
+                          color: _kAppBlue,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          _currentMode == RecognitionMode.phrases
+                              ? 'Phrases'
+                              : _currentMode == RecognitionMode.alphabet
+                                  ? 'A–Z'
+                                  : 'Auto',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: _kAppBlue,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -1759,76 +1991,235 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       builder: (context) {
         final isDark = Theme.of(context).brightness == Brightness.dark;
         return DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          maxChildSize: 0.9,
-          minChildSize: 0.4,
+          initialChildSize: 0.75,
+          maxChildSize: 0.95,
+          minChildSize: 0.5,
           builder: (context, scrollController) => ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
               child: Container(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                 decoration: BoxDecoration(
                   color: isDark
-                      ? const Color(0xFF0E1626).withValues(alpha: 0.95)
-                      : Colors.white.withValues(alpha: 0.95),
+                      ? const Color(0xFF0E1626).withValues(alpha: 0.98)
+                      : Colors.white.withValues(alpha: 0.98),
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        const Text(
-                          'FSL Signing Guide',
-                          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-                        ),
-                        const SizedBox(width: 5),
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: const BoxDecoration(
-                            color: _kAppYellow,
-                            shape: BoxShape.circle,
+                child: DefaultTabController(
+                  length: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: ListView(
-                        controller: scrollController,
-                        physics: const BouncingScrollPhysics(),
-                        children: const [
-                          _GuideItem('HELLO', 'Wave hand near face with a friendly smile'),
-                          _GuideItem('THANK YOU', 'Touch chin with fingers, move hand forward'),
-                          _GuideItem('YES', 'Closed fist nodding up and down'),
-                          _GuideItem('NO', 'Index and middle finger snap to thumb'),
-                          _GuideItem('PLEASE', 'Open flat palm rubbed circular on chest'),
-                          _GuideItem('SORRY', 'Closed fist rubbed circular on chest'),
-                          _GuideItem('GOOD', 'Thumb up gesture moving outward from chin'),
-                          _GuideItem('BAD', 'Thumb down gesture moving outward from chin'),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          const Icon(Icons.menu_book_rounded, color: _kAppBlue, size: 22),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'FSL Reference & Tips',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded),
+                            tooltip: 'Close guide',
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
                         ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      TabBar(
+                        indicatorColor: _kAppBlue,
+                        indicatorWeight: 3,
+                        labelColor: _kAppBlue,
+                        unselectedLabelColor: isDark ? Colors.white60 : const Color(0xFF64748B),
+                        labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                        tabs: const [
+                          Tab(text: 'Phrases'),
+                          Tab(text: 'Alphabet A–Z'),
+                          Tab(text: 'Accuracy Tips'),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Expanded(
+                        child: TabBarView(
+                          children: [
+                            // 1. Phrases Tab (Trained FSL Vocabulary)
+                            ListView(
+                              controller: scrollController,
+                              physics: const BouncingScrollPhysics(),
+                              children: const [
+                                _GuideItem('KAMUSTA', 'Friendly open-palm wave at cheek/shoulder level with palm facing forward'),
+                                _GuideItem('KAMUSTA KA', 'Curved hands with palms up rotate outward toward conversation partner'),
+                                _GuideItem('MABUTI', 'Fingertips of dominant flat hand touch chin and move forward and down'),
+                                _GuideItem('SALAMAT', 'Flat open hand touches chin/lips then extends gracefully toward receiver'),
+                                _GuideItem('WALANG ANUMAN', 'Open flat palm sweeps inward toward chest with a welcoming nod'),
+                                _GuideItem('MAGANDANG UMAGA', 'Sign Mabuti (chin forward) then dominant hand rises upward like rising sun'),
+                                _GuideItem('MAGANDANG HAPON', 'Sign Mabuti then dominant hand tilts downward at 45° angle over arm'),
+                                _GuideItem('MAGANDANG GABI', 'Sign Mabuti then curved hand covers non-dominant wrist like sunset'),
+                                _GuideItem('IKINAGAGALAK KITANG MAKILALA', 'Index fingers of both hands approach each other at chest level'),
+                                _GuideItem('MAGKITA TAYO BUKAS', 'V-handshape points from eyes outward, then thumb flicks forward at cheek'),
+                                _GuideItem('OO', 'Closed fist nods up and down at chest height mimicking a nodding head'),
+                                _GuideItem('HINDI', 'Index and middle finger extended together snap sharply to meet the thumb'),
+                                _GuideItem('TAMA', 'Dominant index finger edge drops firmly across top of non-dominant index finger'),
+                                _GuideItem('MALI', 'Y-handshape (thumb and pinky extended) touches the center of the chin'),
+                                _GuideItem('ALAM', 'Fingertips of flat hand tap temple/forehead once with confident nod'),
+                                _GuideItem('HINDI ALAM', 'Fingertips touch temple then twist sharply outward with head shake'),
+                                _GuideItem('NAIINTINDIHAN', 'Index finger flicks upward from thumb near temple like a light bulb'),
+                                _GuideItem('HINDI MAINTINDIHAN', 'Index flick near temple accompanied by furrowed brow and head shake'),
+                                _GuideItem('BINGI', 'Index finger touches ear then moves forward to touch near the mouth'),
+                                _GuideItem('MAHIRAP MAKARINIG', 'H-handshape taps downward once then twice indicating partial hearing'),
+                              ],
+                            ),
+                            // 2. Alphabet Tab
+                            ListView(
+                              controller: scrollController,
+                              physics: const BouncingScrollPhysics(),
+                              children: const [
+                                _GuideItem('A', 'Closed fist with thumb resting alongside index finger'),
+                                _GuideItem('B', 'Four fingers held upright together, thumb folded flat across palm'),
+                                _GuideItem('C', 'Hand curved into a "C" shape facing outward'),
+                                _GuideItem('D', 'Index finger points straight up; thumb and other 3 fingers form a circle'),
+                                _GuideItem('E', 'All four fingertips curled down resting lightly on thumb tip'),
+                                _GuideItem('F', 'Index finger and thumb touch in circle; other 3 fingers extended upward'),
+                                _GuideItem('G', 'Index finger and thumb point sideways parallel to each other'),
+                                _GuideItem('H', 'Index and middle fingers extended together pointing horizontally'),
+                                _GuideItem('I', 'Little finger (pinky) pointed straight up; all other fingers closed in fist'),
+                                _GuideItem('J', 'Little finger up, trace the curve of a "J" in the air'),
+                                _GuideItem('K', 'Index finger upright, middle tilted forward, thumb placed between them'),
+                                _GuideItem('L', 'Thumb and index finger form an "L" shape upright'),
+                                _GuideItem('M', 'Thumb tucked under three folded fingers (index, middle, ring)'),
+                                _GuideItem('N', 'Thumb tucked under two folded fingers (index and middle)'),
+                                _GuideItem('O', 'All fingertips touch thumb tip forming an "O" oval'),
+                                _GuideItem('P', 'Same as "K" handshape pointed downwards toward floor'),
+                                _GuideItem('Q', 'Same as "G" handshape pointed downwards toward floor'),
+                                _GuideItem('R', 'Middle finger crossed over index finger upright'),
+                                _GuideItem('S', 'Closed fist with thumb folded tightly across the front of fingers'),
+                                _GuideItem('T', 'Thumb inserted between index and middle finger with fist closed'),
+                                _GuideItem('U', 'Index and middle fingers held straight up touching together'),
+                                _GuideItem('V', 'Index and middle fingers upright spread apart forming a "V"'),
+                                _GuideItem('W', 'Index, middle, and ring fingers spread upright forming a "W"'),
+                                _GuideItem('X', 'Index finger crooked into a hook; other fingers closed in fist'),
+                                _GuideItem('Y', 'Thumb and pinky extended outward like a "shaka" phone sign'),
+                                _GuideItem('Z', 'Index finger points and traces a "Z" in the air'),
+                              ],
+                            ),
+                            // 3. Accuracy Tips Tab
+                            ListView(
+                              controller: scrollController,
+                              physics: const BouncingScrollPhysics(),
+                              children: const [
+                                _GuideTipCard(
+                                  icon: Icons.light_mode_rounded,
+                                  title: 'Good, Even Lighting',
+                                  description: 'Face a light source or window so your hands and face have clear contrast without heavy backlighting or shadows.',
+                                ),
+                                _GuideTipCard(
+                                  icon: Icons.straighten_rounded,
+                                  title: 'Optimal Distance (0.5m – 1.0m)',
+                                  description: 'Position your phone on a stand or desk at chest level so your head, shoulders, and both hands remain in frame.',
+                                ),
+                                _GuideTipCard(
+                                  icon: Icons.front_hand_rounded,
+                                  title: 'Open Palm = Pause Reading',
+                                  description: 'Show an open, stationary palm facing the camera to pause word accumulation while thinking or resting.',
+                                ),
+                                _GuideTipCard(
+                                  icon: Icons.toggle_on_rounded,
+                                  title: 'Use Mode Switch for High Accuracy',
+                                  description: 'Tap "Mode" (top pill) to switch to "A–Z" for precise spelling (names, places) or "Phrases" for conversational signs.',
+                                ),
+                                _GuideTipCard(
+                                  icon: Icons.speed_rounded,
+                                  title: 'Deliberate Pacing',
+                                  description: 'Hold each static letter for about 1 second to confirm detection before transitioning to the next letter.',
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         );
       },
+    );
+  }
+}
+
+class _GuideTipCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String description;
+
+  const _GuideTipCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF162138) : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isDark ? const Color(0xFF233352) : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _kAppBlue.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: _kAppBlue, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.4,
+                    color: isDark ? Colors.white70 : const Color(0xFF475569),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import '../models/sign_result.dart';
 import '../services/recognition/recognition_service.dart';
@@ -7,8 +8,9 @@ import '../services/recognition/backend_recognition_service.dart';
 import '../services/settings_service.dart';
 
 RecognitionService createRecognitionService({SettingsService? settings}) {
-  // On web or desktop, connect to the high-performance ST-GCN backend service
+  // On web, connect to the backend service
   if (kIsWeb) return BackendRecognitionService(settings: settings);
+  // On mobile (Android/iOS), run 100% on-device TFLite with Google Maps style OTA updates
   return TfliteRecognitionService();
 }
 
@@ -21,6 +23,7 @@ class RecognitionProvider extends ChangeNotifier {
   bool get isModelReady => _service.isModelReady;
   bool get isPaused => _service.isPaused;
   Stream<bool>? get pauseStatus => _service.pauseStatus;
+  Stream<List<List<Offset>>>? get landmarkPointsStream => _service.landmarkPointsStream;
 
   bool _isInitialized = false;
   bool get isInitialized => _isInitialized;
@@ -32,6 +35,17 @@ class RecognitionProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  RecognitionMode get mode => _service.mode;
+  void setMode(RecognitionMode value) {
+    _service.mode = value;
+    notifyListeners();
+  }
+
+  Future<void> reloadModels() async {
+    await _service.reloadModels();
+    notifyListeners();
+  }
+
   Future<void> start() async {
     await _service.start();
   }
@@ -40,8 +54,16 @@ class RecognitionProvider extends ChangeNotifier {
     await _service.stop();
   }
 
-  Future<void> processFrame(CameraImage image) async {
-    await _service.processFrame(image);
+  Future<void> processFrame(
+    CameraImage image, {
+    int? sensorOrientation,
+    bool? isFrontCamera,
+  }) async {
+    await _service.processFrame(
+      image,
+      sensorOrientation: sensorOrientation,
+      isFrontCamera: isFrontCamera,
+    );
   }
 
   Stream<SignResult> get predictions => _service.predictions;

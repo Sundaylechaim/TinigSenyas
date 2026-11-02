@@ -129,13 +129,7 @@ class SettingsService extends ChangeNotifier {
           parsedUrl.userInfo.isNotEmpty ||
           parsedUrl.hasQuery ||
           parsedUrl.hasFragment ||
-          !const {'http', 'https'}.contains(parsedUrl.scheme) ||
-          (parsedUrl.scheme == 'http' &&
-              !const {
-                'localhost',
-                '127.0.0.1',
-                '10.0.2.2',
-              }.contains(parsedUrl.host))) {
+          !const {'http', 'https'}.contains(parsedUrl.scheme)) {
         throw ArgumentError.value(
           url,
           'url',
@@ -255,3 +249,4 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 }
+

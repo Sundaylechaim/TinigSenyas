@@ -94,8 +94,11 @@ class ModelUpdater {
     // If a remote URL is specified, query it
     if (remoteManifestUrl != null && remoteManifestUrl!.isNotEmpty) {
       try {
-        final response = await _dio.get<Map<String, dynamic>>(remoteManifestUrl!);
-        final data = response.data;
+        final response = await _dio.get<dynamic>(remoteManifestUrl!);
+        final rawData = response.data;
+        final Map<String, dynamic>? data = rawData is String
+            ? (jsonDecode(rawData) as Map<String, dynamic>?)
+            : (rawData as Map<String, dynamic>?);
         if (data != null) {
           final remoteVer = (data['version'] as String?) ?? currentVersion;
           final downloadUrl = (data['url'] as String?) ?? '';
