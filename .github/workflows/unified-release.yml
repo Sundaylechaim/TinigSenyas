@@ -98,12 +98,12 @@ jobs:
       # A universal APK bundles 4 ABIs and measured 198 MB; per-ABI builds are ~55 MB.
       - name: Build Release APKs (per ABI)
         working-directory: frontend
-        run: flutter build apk --release --target-platform android-arm64
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/app/outputs/flutter-apk/TinigSenyas-Android.apk
+        run: flutter build apk --split-per-abi
 
       - name: Prepare Android Binaries
         run: |
           mkdir -p dist
+          cp frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/TinigSenyas-Android.apk
           cp frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/TinigSenyas-Android-arm64.apk
           cp frontend/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/TinigSenyas-Android-armv7.apk
 
@@ -111,7 +111,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-dist
-          path: dist/TinigSenyas-Android.apk
+          path: dist/*
 
   # -------------------------------------------------------------
   # Job 2: Build iOS IPA & Simulator Build (unmac)
@@ -251,11 +251,16 @@ jobs:
         with:
           body_path: release_body.md
           files: |
+            release_assets/TinigSenyas-Android.apk
             release_assets/TinigSenyas-Android-arm64.apk
             release_assets/TinigSenyas-Android-armv7.apk
             release_assets/TinigSenyas-iOS.ipa
             release_assets/TinigSenyas-iOS-Simulator.zip
             release_assets/source.json
+            frontend/assets/model/fsl_model.tflite
+            frontend/assets/model/fsl_alphabet.tflite
+            frontend/assets/model/labels.txt
+            frontend/assets/model/manifest.json
           fail_on_unmatched_files: true
 
       - name: Upload Unified Package (on workflow_dispatch)

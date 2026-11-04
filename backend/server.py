@@ -135,7 +135,7 @@ _OTA_MODEL_SHA256 = os.environ.get(
     "OTA_MODEL_SHA256",
     "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
 )
-_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.0.1")
+_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.1.0")
 
 
 @app.get("/api/v1/ota/manifest", response_model=ModelManifest, tags=["OTA Updates"])

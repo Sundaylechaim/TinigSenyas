@@ -89,18 +89,19 @@ class TestModelInference(unittest.TestCase):
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
 
+        alpha_classes = np.load(self.alphabet_classes_path, allow_pickle=True)
+        num_alpha = len(alpha_classes)
         self.assertEqual(list(input_details[0]["shape"]), [1, 63])
-        self.assertEqual(list(output_details[0]["shape"]), [1, 26])
+        self.assertEqual(list(output_details[0]["shape"]), [1, num_alpha])
 
         dummy_hand = np.random.randn(1, 63).astype(np.float32)
         interpreter.set_tensor(input_details[0]["index"], dummy_hand)
         interpreter.invoke()
 
         out = interpreter.get_tensor(output_details[0]["index"])[0]
-        self.assertEqual(len(out), 26)
-        alpha_classes = np.load(self.alphabet_classes_path, allow_pickle=True)
+        self.assertEqual(len(out), num_alpha)
         pred_letter = str(alpha_classes[int(np.argmax(out))])
-        print(f"[OK] Alphabet model inference succeeded! Predicted letter: '{pred_letter}' (out of 26 letters)")
+        print(f"[OK] Alphabet model inference succeeded! Predicted letter: '{pred_letter}' (out of {num_alpha} letters)")
 
     def test_05_palm_detection_and_pause(self):
         """Verify the Open Palm / Stop gesture detection and pause buffer reset logic."""

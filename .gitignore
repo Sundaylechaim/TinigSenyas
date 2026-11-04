@@ -44,6 +44,10 @@ ios/.symlinks/
 ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
 
+# Binaries & APKs
+*.apk
+*.ipa
+
 # System & Editor Files
 .DS_Store
 Thumbs.db

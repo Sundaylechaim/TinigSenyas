@@ -25,7 +25,7 @@ class TfliteRecognitionService implements RecognitionService {
   List<String> _fslLabels = [];
   final List<String> _alphabetLabels = [
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
+    'N', 'Ng', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Ñ'
   ];
 
   RecognitionMode _mode = RecognitionMode.auto;
@@ -504,7 +504,7 @@ class TfliteRecognitionService implements RecognitionService {
     }
 
     final input = [flat63];
-    final output = [List<double>.filled(26, 0.0)];
+    final output = [List<double>.filled(_alphabetLabels.length, 0.0)];
 
     try {
       _alphabetInterpreter!.run(input, output);
