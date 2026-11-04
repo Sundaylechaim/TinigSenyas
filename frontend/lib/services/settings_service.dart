@@ -61,7 +61,7 @@ class SettingsService extends ChangeNotifier {
   String get modelVersion {
     final savedVersion = _prefs?.getString(_modelVersionKey);
     return (savedVersion == null || savedVersion.isEmpty)
-        ? 'Not installed'
+        ? '1.1.0'
         : savedVersion;
   }
 

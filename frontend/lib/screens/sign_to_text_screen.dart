@@ -471,7 +471,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     _isCheckingModelUpdate = true;
     try {
       final serverUrl = context.read<SettingsService>().ttsServerUrl;
-      final remoteManifest = serverUrl.isNotEmpty ? '$serverUrl/api/v1/ota/manifest' : null;
+      final remoteManifest = serverUrl.isNotEmpty ? '$serverUrl/api/v1/ota/manifest' : ModelUpdater.defaultRemoteManifestUrl;
       final updater = ModelUpdater(remoteManifestUrl: remoteManifest);
       final updateInfo = await updater.checkForUpdates();
       if (updateInfo.status == UpdateStatus.updateAvailable && mounted) {

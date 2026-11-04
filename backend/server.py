@@ -106,12 +106,18 @@ class FSLVocabularyItem(BaseModel):
     video_path: Optional[str] = None
     created_at: Optional[str] = None
 
+class ModelFileItem(BaseModel):
+    name: str
+    url: str
+    sha256: str
+
 class ModelManifest(BaseModel):
     version: str
     url: str
     sha256: str
     min_app_version: str
     notes: str
+    models: Optional[List[ModelFileItem]] = None
 
 # Default seeded FSL transactional vocabulary as described in Scope
 _DEFAULT_VOCABULARY: List[FSLVocabularyItem] = [
@@ -125,15 +131,22 @@ _DEFAULT_VOCABULARY: List[FSLVocabularyItem] = [
     FSLVocabularyItem(fsl_id=8, word="Pakiusap", meaning="Magalang na kahilingan (Please)", gesture_label="pakiusap"),
 ]
 
-# OTA defaults describe the model actually bundled in this repository. Publish a new
-# .tflite asset and override these three variables to push an update to installed apps.
+# OTA defaults describe the models hosted directly in the official repository.
 _OTA_MODEL_URL = os.environ.get(
     "OTA_MODEL_URL",
-    "https://github.com/Sundaylechaim/TinigSenyas/releases/latest/download/fsl_model.tflite",
+    "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
 )
 _OTA_MODEL_SHA256 = os.environ.get(
     "OTA_MODEL_SHA256",
     "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
+)
+_OTA_ALPHABET_URL = os.environ.get(
+    "OTA_ALPHABET_URL",
+    "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_alphabet.tflite",
+)
+_OTA_ALPHABET_SHA256 = os.environ.get(
+    "OTA_ALPHABET_SHA256",
+    "33e45a06f2a133969d50554211e280ddf040825478e6e748e4d63b7ec2de4b97",
 )
 _OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.1.0")
 
@@ -141,14 +154,26 @@ _OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.1.0")
 @app.get("/api/v1/ota/manifest", response_model=ModelManifest, tags=["OTA Updates"])
 async def get_model_manifest():
     """
-    Returns the latest ST-GCN quantized model metadata for mobile Over-The-Air deployment.
+    Returns the latest quantized models metadata for mobile Over-The-Air deployment.
     """
     return ModelManifest(
         version=_OTA_MODEL_VERSION,
         url=_OTA_MODEL_URL,
         sha256=_OTA_MODEL_SHA256,
         min_app_version="1.0.0",
-        notes="Optimized ST-GCN quantized model for transactional FSL isolated gestures.",
+        notes="Updated 28-class FSL alphabet fingerspelling model (A-Z, Ng, Ñ) and transactional ST-GCN gestures.",
+        models=[
+            ModelFileItem(
+                name="fsl_alphabet.tflite",
+                url=_OTA_ALPHABET_URL,
+                sha256=_OTA_ALPHABET_SHA256,
+            ),
+            ModelFileItem(
+                name="fsl_model.tflite",
+                url=_OTA_MODEL_URL,
+                sha256=_OTA_MODEL_SHA256,
+            ),
+        ],
     )
 
 @app.get("/api/v1/ota/vocabulary", response_model=List[FSLVocabularyItem], tags=["OTA Updates"])

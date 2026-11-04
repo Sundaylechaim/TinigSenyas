@@ -560,7 +560,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final serverUrl = _settingsService.ttsServerUrl;
               final otaManifestUrl = serverUrl.isNotEmpty
                   ? '$serverUrl/api/v1/ota/manifest'
-                  : 'https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/manifest.json';
+                  : ModelUpdater.defaultRemoteManifestUrl;
               final updater = ModelUpdater(remoteManifestUrl: otaManifestUrl);
               showDialog(
                 context: context,
@@ -568,6 +568,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   modelUpdater: updater,
                   onUpdateComplete: () async {
                     final newVersion = await updater.getInstalledVersion();
+                    await _settingsService.setModelVersion(newVersion);
                     if (!mounted) return;
                     setState(() {
                       _modelVersion = newVersion;

@@ -18,6 +18,7 @@ class ModelUpdateDialog extends StatefulWidget {
 class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
   ModelUpdateInfo? _updateInfo;
   Stream<ModelUpdateInfo>? _downloadStream;
+  bool _isChecking = true;
 
   @override
   void initState() {
@@ -26,9 +27,15 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
   }
 
   Future<void> _checkForUpdates() async {
+    setState(() {
+      _isChecking = true;
+    });
+
     final info = await widget.modelUpdater.checkForUpdates();
     if (!mounted) return;
+
     setState(() {
+      _isChecking = false;
       _updateInfo = info;
     });
 
@@ -55,7 +62,10 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
       onError: (error) {
         if (!mounted) return;
         setState(() {
-          _updateInfo = info.copyWith(status: UpdateStatus.error);
+          _updateInfo = info.copyWith(
+            status: UpdateStatus.error,
+            errorMessage: 'Download failed: $error',
+          );
         });
       },
     );
@@ -63,10 +73,26 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final info = _updateInfo;
+    if (_isChecking && _updateInfo == null) {
+      return const AlertDialog(
+        title: Text('Model Update'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Checking for latest AI models...'),
+          ],
+        ),
+      );
+    }
 
+    final info = _updateInfo;
     if (info == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const AlertDialog(
+        title: Text('Model Update'),
+        content: Text('Unable to read model status.'),
+      );
     }
 
     return AlertDialog(
@@ -75,10 +101,13 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Current version: ${info.version}'),
-          const SizedBox(height: 16),
+          Text(
+            'Installed version: ${info.currentVersion}',
+            style: const TextStyle(fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 12),
           if (info.status == UpdateStatus.upToDate && info.progress < 1.0) ...[
-            const Text('Model is up to date'),
+            Text('Your models are up to date (v${info.version}).'),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -87,20 +116,22 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
                 child: const Text('Close'),
               ),
             ),
-          ] else if (info.status == UpdateStatus.updateAvailable) ...[
-            const Text('Update available! Downloading...'),
+          ] else if (info.status == UpdateStatus.updateAvailable ||
+              info.status == UpdateStatus.downloading) ...[
+            Text('Downloading update to v${info.version}...'),
             const SizedBox(height: 16),
             LinearProgressIndicator(value: info.progress),
             const SizedBox(height: 8),
-            Text('${(info.progress * 100).toInt()}%'),
-          ] else if (info.status == UpdateStatus.downloading) ...[
-            const Text('Downloading update...'),
-            const SizedBox(height: 16),
-            LinearProgressIndicator(value: info.progress),
-            const SizedBox(height: 8),
-            Text('${(info.progress * 100).toInt()}%'),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text('${(info.progress * 100).toInt()}%'),
+            ),
           ] else if (info.status == UpdateStatus.error) ...[
-            const Text('Failed to check for updates'),
+            Text(
+              info.errorMessage ??
+                  'Failed to download model updates. Please check your internet connection.',
+              style: const TextStyle(color: Colors.redAccent),
+            ),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,

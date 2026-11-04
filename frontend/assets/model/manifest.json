@@ -1,7 +1,19 @@
 {
   "version": "1.1.0",
-  "url": "https://github.com/Sundaylechaim/TinigSenyas/releases/latest/download/fsl_model.tflite",
+  "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
   "sha256": "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
   "min_app_version": "1.0.0",
-  "notes": "Updated 28-class FSL alphabet fingerspelling model (A-Z, Ng, Ñ) and transactional ST-GCN gestures."
+  "notes": "Updated 28-class FSL alphabet fingerspelling model (A-Z, Ng, Ñ) and conversational ST-GCN gestures.",
+  "models": [
+    {
+      "name": "fsl_alphabet.tflite",
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_alphabet.tflite",
+      "sha256": "33e45a06f2a133969d50554211e280ddf040825478e6e748e4d63b7ec2de4b97"
+    },
+    {
+      "name": "fsl_model.tflite",
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
+      "sha256": "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4"
+    }
+  ]
 }
