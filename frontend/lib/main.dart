@@ -128,10 +128,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         ),
         child: NavigationBar(
           selectedIndex: _currentIndex,
-          onDestinationSelected: (index) => setState(() {
-            _currentIndex = index;
-            _visitedTabs.add(index);
-          }),
+          onDestinationSelected: (index) {
+            ScaffoldMessenger.of(context).clearSnackBars();
+            setState(() {
+              _currentIndex = index;
+              _visitedTabs.add(index);
+            });
+          },
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.home_outlined),

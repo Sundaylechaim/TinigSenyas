@@ -630,11 +630,11 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       _lastAppendedLetter = null;
     });
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Sentence cleared'),
-        duration: const Duration(seconds: 4),
+        duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
         action: SnackBarAction(
           label: 'UNDO',
@@ -717,6 +717,12 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
         }
       }
     }
+  }
+
+  @override
+  void deactivate() {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    super.deactivate();
   }
 
   @override

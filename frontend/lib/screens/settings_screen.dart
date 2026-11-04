@@ -45,6 +45,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+      }
+    });
     _settingsService = context.read<SettingsService>();
     _loadSettings();
   }
@@ -404,16 +409,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
-          _SettingsTile(
-            title: 'Filipino speech service',
-            subtitle: _ttsServerUrl.isEmpty
-                ? 'Not configured'
-                : 'Using $_ttsServerUrl',
-            trailing: TextButton(
-              onPressed: _configureOnlineTts,
-              child: const Text('Advanced'),
+          if (_ttsServerUrl.isNotEmpty)
+            _SettingsTile(
+              title: 'Filipino speech service',
+              subtitle: 'Using $_ttsServerUrl',
+              trailing: TextButton(
+                onPressed: _configureOnlineTts,
+                child: const Text('Edit'),
+              ),
             ),
-          ),
           if (_ttsLanguage.toLowerCase().startsWith('fil'))
             _SettingsTile(
               title: 'Online Filipino voice',
@@ -470,11 +474,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           value: '',
                           child: Text('Automatic'),
                         ),
-                        ...languageVoices.map(
-                          (voice) => DropdownMenuItem(
-                            value: _voiceKey(voice),
+                        ...languageVoices.asMap().entries.map(
+                          (entry) => DropdownMenuItem(
+                            value: _voiceKey(entry.value),
                             child: Text(
-                              _voiceLabel(voice),
+                              _voiceLabel(entry.value, entry.key + 1),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -848,9 +852,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ? 'Filipino'
       : language;
 
-  String _voiceLabel(Map<String, String> voice) {
-    final genderLabel = TtsService.isFemaleVoice(voice) ? ' · Female' : '';
-    return '${voice['name'] ?? 'Unknown'} · ${voice['locale'] ?? 'Unknown'}$genderLabel';
+  String _voiceLabel(Map<String, String> voice, [int? index]) {
+    final rawName = (voice['name'] ?? '').toLowerCase();
+    final isOnline = rawName.contains('network') || rawName.contains('online');
+    final isFemale = TtsService.isFemaleVoice(voice) ||
+        rawName.contains('cfc') ||
+        rawName.contains('fie') ||
+        rawName.contains('female');
+    final gender = isFemale ? 'Female' : 'Male';
+    final type = isOnline ? 'Online' : 'Device';
+
+    if (rawName.contains('-language')) {
+      return 'Default ($gender)';
+    }
+
+    final voiceNum = index != null ? 'Voice $index' : 'Voice';
+    return '$voiceNum · $gender ($type)';
   }
 
   Future<void> _selectTtsVoice(String? key) async {
