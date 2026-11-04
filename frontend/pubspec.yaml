@@ -37,6 +37,7 @@ dependencies:
   archive: ^4.5.2
   crypto: ^3.0.7
   sqflite_common_ffi_web: ^1.2.0
+  shorebird_code_push: ^2.0.7
 
 dev_dependencies:
   flutter_test:
@@ -55,3 +56,4 @@ flutter:
     - assets/model/labels.txt
     - assets/model/fsl_model.tflite
     - assets/model/fsl_alphabet.tflite
+    - shorebird.yaml

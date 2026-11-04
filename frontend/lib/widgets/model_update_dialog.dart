@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shorebird_code_push/shorebird_code_push.dart' as sb;
 import '../../services/model_updater.dart';
 
 class ModelUpdateDialog extends StatefulWidget {
@@ -19,6 +20,7 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
   ModelUpdateInfo? _updateInfo;
   Stream<ModelUpdateInfo>? _downloadStream;
   bool _isChecking = true;
+  String? _appUpdateNotice;
 
   @override
   void initState() {
@@ -29,8 +31,33 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
   Future<void> _checkForUpdates() async {
     setState(() {
       _isChecking = true;
+      _appUpdateNotice = null;
     });
 
+    // 1. Check Shorebird OTA Code Updates
+    final updater = sb.ShorebirdUpdater();
+    if (updater.isAvailable) {
+      try {
+        final status = await updater.checkForUpdate();
+        if (status == sb.UpdateStatus.outdated) {
+          setState(() {
+            _appUpdateNotice = 'Downloading app update in background...';
+          });
+          await updater.update();
+          setState(() {
+            _appUpdateNotice = 'App update ready! Restart TinigSenyas to apply.';
+          });
+        } else if (status == sb.UpdateStatus.restartRequired) {
+          setState(() {
+            _appUpdateNotice = 'App update downloaded! Please restart the app.';
+          });
+        }
+      } catch (e) {
+        debugPrint('[Shorebird] Update check: $e');
+      }
+    }
+
+    // 2. Check FSL AI Model Updates
     final info = await widget.modelUpdater.checkForUpdates();
     if (!mounted) return;
 
@@ -75,13 +102,13 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
   Widget build(BuildContext context) {
     if (_isChecking && _updateInfo == null) {
       return const AlertDialog(
-        title: Text('Model Update'),
+        title: Text('Updates (OTA)'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('Checking for latest AI models...'),
+            Text('Checking for app & model updates...'),
           ],
         ),
       );
@@ -90,24 +117,39 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
     final info = _updateInfo;
     if (info == null) {
       return const AlertDialog(
-        title: Text('Model Update'),
-        content: Text('Unable to read model status.'),
+        title: Text('Updates (OTA)'),
+        content: Text('Unable to read update status.'),
       );
     }
 
     return AlertDialog(
-      title: const Text('Model Update'),
+      title: const Text('Updates (OTA)'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Installed version: ${info.currentVersion}',
+            'App Version: 1.1.0 (Model: ${info.currentVersion})',
             style: const TextStyle(fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 12),
+          if (_appUpdateNotice != null) ...[
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                _appUpdateNotice!,
+                style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.blue),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (info.status == UpdateStatus.upToDate && info.progress < 1.0) ...[
-            Text('Your models are up to date (v${info.version}).'),
+            Text('Your app and AI models are up to date!'),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -118,7 +160,7 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
             ),
           ] else if (info.status == UpdateStatus.updateAvailable ||
               info.status == UpdateStatus.downloading) ...[
-            Text('Downloading update to v${info.version}...'),
+            Text('Downloading model update to v${info.version}...'),
             const SizedBox(height: 16),
             LinearProgressIndicator(value: info.progress),
             const SizedBox(height: 8),
