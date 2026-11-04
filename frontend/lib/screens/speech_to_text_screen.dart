@@ -93,12 +93,10 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
           context: context,
           builder: (ctx) => AlertDialog(
             icon: const Icon(Icons.mic, color: Color(0xFF0138FF), size: 40),
-            title: const Text('Audio Recording Consent (CIPA)'),
+            title: const Text('Microphone Consent'),
             content: const Text(
-              'Under wiretapping and communications privacy laws (CIPA), '
-              'TinigSenyas requires your explicit consent to access the microphone and '
-              'record spoken audio for translation into Filipino Sign Language. '
-              'Do you consent to audio recording for translation?',
+              'TinigSenyas needs your consent to access the microphone to convert your spoken voice '
+              'into Filipino Sign Language. Audio is processed directly for translation.',
             ),
             actions: [
               TextButton(
