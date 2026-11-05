@@ -59,11 +59,30 @@ class TfliteRecognitionService implements RecognitionService {
   final List<(double, double, bool)> _jTrajectory = [];
   int _jCooldown = 0;
 
+  // Natural Rest Zone state
+  bool _manualPaused = false;
+  int _restZoneFrameCount = 0;
+  static const int _restZoneThreshold = 15; // ~500ms of sustained hands at rest
+
   @override
   bool get isModelReady => _isInitialized && _alphabetInterpreter != null;
 
   @override
   bool get isPaused => _isPaused;
+
+  @override
+  void setPaused(bool value) {
+    _manualPaused = value;
+    _isPaused = value;
+    _pauseStatusController.add(value);
+    if (value) {
+      _sequenceBuffer.clear();
+      _alphaCandidate = null;
+      _alphaCandidateCount = 0;
+      _fslCandidate = null;
+      _fslCandidateCount = 0;
+    }
+  }
 
   @override
   Stream<bool>? get pauseStatus => _pauseStatusController.stream;
@@ -253,6 +272,16 @@ class TfliteRecognitionService implements RecognitionService {
       if (_sequenceBuffer.isNotEmpty && _sequenceBuffer.length > 10) {
         _sequenceBuffer.removeAt(0);
       }
+
+      // Natural Rest Zone: hands lowered out of camera frame
+      _restZoneFrameCount++;
+      if (_restZoneFrameCount >= _restZoneThreshold) {
+        if (!_isPaused && !_manualPaused) {
+          _isPaused = true;
+          _pauseStatusController.add(true);
+        }
+        _sequenceBuffer.clear();
+      }
       return;
     }
 
@@ -270,23 +299,39 @@ class TfliteRecognitionService implements RecognitionService {
     final primaryHand = transformedHands.first;
     if (primaryHand.length < 21) return;
 
-    // 3. Check Open Palm (Stop / Pause gesture)
-    if (_checkIsOpenPalm(primaryHand)) {
-      if (!_isPaused) {
-        _isPaused = true;
-        _pauseStatusController.add(true);
+    // 3. Natural Rest Zone Check:
+    // Check if hands have dropped below active signing zone (wrist y >= 0.82)
+    final bool allHandsRestingLow = transformedHands.every((hand) {
+      if (hand.isEmpty) return true;
+      final wristY = hand[0].$2;
+      return wristY >= 0.82;
+    });
+
+    if (allHandsRestingLow) {
+      _restZoneFrameCount++;
+      if (_restZoneFrameCount >= _restZoneThreshold) {
+        if (!_isPaused && !_manualPaused) {
+          _isPaused = true;
+          _pauseStatusController.add(true);
+        }
+        _sequenceBuffer.clear();
+        _alphaCandidate = null;
+        _alphaCandidateCount = 0;
+        _fslCandidate = null;
+        _fslCandidateCount = 0;
       }
-      _sequenceBuffer.clear();
-      _alphaCandidate = null;
-      _alphaCandidateCount = 0;
-      _fslCandidate = null;
-      _fslCandidateCount = 0;
-      return;
+      return; // Skip inference while hands are resting
     } else {
-      if (_isPaused) {
+      // Hands are raised in active signing space:
+      _restZoneFrameCount = 0;
+      if (_isPaused && !_manualPaused) {
         _isPaused = false;
         _pauseStatusController.add(false);
       }
+    }
+
+    if (_isPaused) {
+      return;
     }
 
     // 4. Compute Kinetic Hand Motion
@@ -440,40 +485,6 @@ class TfliteRecognitionService implements RecognitionService {
       }
     }
     return false;
-  }
-
-  /// Validates Open Palm / Pause posture using upright coordinates
-  bool _checkIsOpenPalm(List<(double, double, double)> lms) {
-    if (lms.length < 21) return false;
-    final wrist = lms[0];
-    final middleMcp = lms[9];
-
-    // In upright screen coordinates: y increases downwards.
-    // Wrist must be lower on screen than middle MCP knuckles.
-    if (wrist.$2 <= middleMcp.$2 + 0.05) return false;
-
-    // All 4 fingers (Index, Middle, Ring, Pinky) must be extended upwards:
-    final fingers = [(8, 6), (12, 10), (16, 14), (20, 18)];
-    for (final pair in fingers) {
-      final tip = lms[pair.$1];
-      final pip = lms[pair.$2];
-      // Tip must be higher on screen than PIP
-      if (tip.$2 >= pip.$2) return false;
-
-      final distTip = math.sqrt(math.pow(tip.$1 - wrist.$1, 2) + math.pow(tip.$2 - wrist.$2, 2));
-      final distPip = math.sqrt(math.pow(pip.$1 - wrist.$1, 2) + math.pow(pip.$2 - wrist.$2, 2));
-      if (distTip <= distPip * 1.12) return false;
-    }
-
-    // Thumb spread check (thumb tip 4 vs pinky MCP 17)
-    final thumbTip = lms[4];
-    final pinkyMcp = lms[17];
-    final distThumbPinky = math.sqrt(math.pow(thumbTip.$1 - pinkyMcp.$1, 2) + math.pow(thumbTip.$2 - pinkyMcp.$2, 2));
-    final distThumbWrist = math.sqrt(math.pow(thumbTip.$1 - wrist.$1, 2) + math.pow(thumbTip.$2 - wrist.$2, 2));
-    final distMcpWrist = math.sqrt(math.pow(lms[2].$1 - wrist.$1, 2) + math.pow(lms[2].$2 - wrist.$2, 2));
-    if (distThumbPinky < 0.08 && distThumbWrist < distMcpWrist * 1.05) return false;
-
-    return true;
   }
 
   /// Normalizes 21 3D hand coordinates (centered at wrist, scaled by max radius) and runs fsl_alphabet.tflite

@@ -67,6 +67,12 @@ class BackendRecognitionService implements RecognitionService {
   bool get isPaused => _isPaused;
 
   @override
+  void setPaused(bool value) {
+    _isPaused = value;
+    _pauseStatusController.add(value);
+  }
+
+  @override
   Stream<bool>? get pauseStatus => _pauseStatusController.stream;
 
   Stream<RecognitionProgress> get progress => _progressController.stream;

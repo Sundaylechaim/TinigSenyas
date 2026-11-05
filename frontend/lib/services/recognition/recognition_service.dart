@@ -25,6 +25,7 @@ abstract class RecognitionService {
   Stream<bool>? get pauseStatus;
   Stream<List<List<Offset>>>? get landmarkPointsStream;
   bool get isPaused;
+  void setPaused(bool value);
   Future<void> reloadModels();
   void dispose();
 }

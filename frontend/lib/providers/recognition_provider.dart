@@ -22,6 +22,10 @@ class RecognitionProvider extends ChangeNotifier {
   RecognitionService get service => _service;
   bool get isModelReady => _service.isModelReady;
   bool get isPaused => _service.isPaused;
+  void setPaused(bool value) {
+    _service.setPaused(value);
+    notifyListeners();
+  }
   Stream<bool>? get pauseStatus => _service.pauseStatus;
   Stream<List<List<Offset>>>? get landmarkPointsStream => _service.landmarkPointsStream;
 

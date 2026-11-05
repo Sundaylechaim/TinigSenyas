@@ -117,8 +117,8 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     _pauseSubscription = _recognitionProvider?.pauseStatus?.listen((paused) {
       if (mounted && _isPaused != paused) {
         if (paused) {
-          // Tactile haptic pulse to notify signer that Open Palm pause & buffer flush triggered
-          HapticFeedback.heavyImpact();
+          // Subtle haptic pulse to notify signer that hands at rest paused recognition
+          HapticFeedback.lightImpact();
         }
         setState(() {
           _isPaused = paused;
@@ -687,13 +687,15 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
 
   void _toggleManualPause() {
     HapticFeedback.mediumImpact();
+    final newPaused = !_isPaused;
     setState(() {
-      _isPaused = !_isPaused;
+      _isPaused = newPaused;
     });
+    _recognitionProvider?.setPaused(newPaused);
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(_isPaused ? '⏸️ Recognition paused' : '▶️ Recognition resumed'),
+        content: Text(newPaused ? '⏸️ Recognition paused' : '▶️ Recognition resumed'),
         duration: const Duration(milliseconds: 900),
         behavior: SnackBarBehavior.floating,
       ),
@@ -1659,7 +1661,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                     child: Semantics(
                       liveRegion: true,
                       label: isPaused
-                          ? 'Sign recognition paused. Open palm detected. Lower hand to sign next word.'
+                          ? 'Sign recognition paused. Hands at rest. Raise hands into frame to sign.'
                           : hasPrediction
                               ? 'Recognized Filipino sign: ${_currentPrediction!.label}, confidence ${(confidence * 100).toInt()} percent'
                               : isReady
@@ -1671,7 +1673,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                         children: [
                           Text(
                             isPaused
-                                ? '⏸️ Paused (Open Palm)'
+                                ? '⏸️ Paused (Hands at rest)'
                                 : hasPrediction
                                     ? _currentPrediction!.label
                                     : isReady
@@ -1840,7 +1842,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       icon = Icons.error_outline_rounded;
       iconColor = Colors.white;
     } else if (isPaused) {
-      message = '⏸️ Reader Paused • Lower hand to resume';
+      message = '⏸️ Reader Paused • Raise hands to resume';
       icon = Icons.pause_circle_rounded;
       iconColor = Colors.white;
     } else if (isTracking) {
@@ -2137,9 +2139,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                                   description: 'Position your phone on a stand or desk at chest level so your head, shoulders, and both hands remain in frame.',
                                 ),
                                 _GuideTipCard(
-                                  icon: Icons.front_hand_rounded,
-                                  title: 'Open Palm = Pause Reading',
-                                  description: 'Show an open, stationary palm facing the camera to pause word accumulation while thinking or resting.',
+                                  icon: Icons.pan_tool_outlined,
+                                  title: 'Natural Rest to Pause',
+                                  description: 'Lower your hands to your lap or sides to pause recognition while thinking. Raise them back into the signing space to resume seamlessly.',
                                 ),
                                 _GuideTipCard(
                                   icon: Icons.toggle_on_rounded,
