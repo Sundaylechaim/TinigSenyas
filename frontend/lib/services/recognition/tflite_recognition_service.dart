@@ -19,10 +19,12 @@ class TfliteRecognitionService implements RecognitionService {
 
   Interpreter? _fslModelInterpreter;
   Interpreter? _alphabetInterpreter;
+  Interpreter? _medicalModelInterpreter;
   HandLandmarkerPlugin? _handLandmarker;
   StreamSubscription<List<Hand>>? _handSubscription;
 
   List<String> _fslLabels = [];
+  List<String> _medicalLabels = [];
   final List<String> _alphabetLabels = [
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
     'N', 'Ng', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Ñ'
@@ -54,6 +56,8 @@ class TfliteRecognitionService implements RecognitionService {
   int _alphaCandidateCount = 0;
   String? _fslCandidate;
   int _fslCandidateCount = 0;
+  String? _medCandidate;
+  int _medCandidateCount = 0;
 
   // Trajectory tracking for dynamic fingerspelled letter 'J'
   final List<(double, double, bool)> _jTrajectory = [];
@@ -81,6 +85,8 @@ class TfliteRecognitionService implements RecognitionService {
       _alphaCandidateCount = 0;
       _fslCandidate = null;
       _fslCandidateCount = 0;
+      _medCandidate = null;
+      _medCandidateCount = 0;
     }
   }
 
@@ -171,7 +177,34 @@ class TfliteRecognitionService implements RecognitionService {
         }
       }
 
-      debugPrint('[TfliteRecognitionService] Models reloaded successfully. Labels: ${_fslLabels.length}, Alphabet: ${_alphabetLabels.length}');
+      // 4. Load Medical ST-GCN Model (fsl_medical.tflite) and Labels
+      final localMedLabelsFile = modelsDir != null ? File(p.join(modelsDir.path, 'medical_labels.txt')) : null;
+      if (localMedLabelsFile != null && await localMedLabelsFile.exists()) {
+        final content = await localMedLabelsFile.readAsString();
+        _medicalLabels = content.split(RegExp(r'\r?\n')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+      } else {
+        try {
+          final bundledLabels = await rootBundle.loadString('assets/model/medical_labels.txt');
+          _medicalLabels = bundledLabels.split(RegExp(r'\r?\n')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+        } catch (e) {
+          debugPrint('[TfliteRecognitionService] Bundled medical labels note: $e');
+        }
+      }
+
+      _medicalModelInterpreter?.close();
+      _medicalModelInterpreter = null;
+      final localMedModelFile = modelsDir != null ? File(p.join(modelsDir.path, 'fsl_medical.tflite')) : null;
+      if (localMedModelFile != null && await localMedModelFile.exists()) {
+        _medicalModelInterpreter = Interpreter.fromFile(localMedModelFile, options: modelOptions);
+      } else {
+        try {
+          _medicalModelInterpreter = await Interpreter.fromAsset('assets/model/fsl_medical.tflite', options: modelOptions);
+        } catch (e) {
+          debugPrint('[TfliteRecognitionService] Medical model load note: $e');
+        }
+      }
+
+      debugPrint('[TfliteRecognitionService] Models reloaded successfully. Labels: ${_fslLabels.length}, Alphabet: ${_alphabetLabels.length}, Medical: ${_medicalLabels.length}');
     } catch (e) {
       debugPrint('[TfliteRecognitionService] Error reloading models: $e');
     }
@@ -385,6 +418,8 @@ class TfliteRecognitionService implements RecognitionService {
       _evaluateAlphabet(primaryHand);
     } else if (_mode == RecognitionMode.phrases) {
       _evaluateConversationalSign(transformedHands);
+    } else if (_mode == RecognitionMode.medical) {
+      _evaluateMedicalSign(transformedHands);
     } else {
       // Auto Mode:
       if (isHandMoving) {
@@ -713,6 +748,147 @@ class TfliteRecognitionService implements RecognitionService {
     }
   }
 
+  /// Evaluates 60-frame ST-GCN sequence using dedicated 25-class Medical FSL model
+  void _evaluateMedicalSign(List<List<(double, double, double)>> transformedHands) {
+    if (_medicalModelInterpreter == null || _medicalLabels.isEmpty || _isPaused) return;
+
+    final currentJoints = List.generate(_totalJoints, (_) => [0.0, 0.0, 0.0]);
+
+    // Synthetic canonical pose landmarks in slots 0..32:
+    currentJoints[0] = [0.0, -0.8, 0.0];  // Head / Nose
+    currentJoints[11] = [-0.5, 0.0, 0.0]; // Left Shoulder
+    currentJoints[12] = [0.5, 0.0, 0.0];  // Right Shoulder
+
+    // Primary hand (Right hand slot 54..74):
+    final rightHand = transformedHands.first;
+    for (int i = 0; i < 21 && i < rightHand.length; i++) {
+      final nx = (rightHand[i].$1 - 0.5) / 0.20;
+      final ny = (rightHand[i].$2 - 0.5) / 0.20;
+      final nz = rightHand[i].$3 / 0.20;
+      currentJoints[54 + i] = [nx, ny, nz];
+    }
+
+    // Secondary hand (Left hand slot 33..53) if present:
+    if (transformedHands.length > 1) {
+      final leftHand = transformedHands[1];
+      for (int i = 0; i < 21 && i < leftHand.length; i++) {
+        final nx = (leftHand[i].$1 - 0.5) / 0.20;
+        final ny = (leftHand[i].$2 - 0.5) / 0.20;
+        final nz = leftHand[i].$3 / 0.20;
+        currentJoints[33 + i] = [nx, ny, nz];
+      }
+    }
+
+    _sequenceBuffer.add(currentJoints);
+    if (_sequenceBuffer.length > _targetSequenceLength) {
+      _sequenceBuffer.removeAt(0);
+    }
+
+    if (_sequenceBuffer.length >= 20) {
+      try {
+        final seqInput = _resampleSequence(_sequenceBuffer, _targetSequenceLength);
+        final input = [seqInput];
+        final output = [List<double>.filled(_medicalLabels.length, 0.0)];
+
+        _medicalModelInterpreter!.run(input, output);
+        final probs = output[0];
+
+        int top1Idx = 0;
+        double top1Prob = probs[0];
+        double top2Prob = 0.0;
+
+        for (int i = 1; i < probs.length; i++) {
+          if (probs[i] > top1Prob) {
+            top2Prob = top1Prob;
+            top1Prob = probs[i];
+            top1Idx = i;
+          } else if (probs[i] > top2Prob) {
+            top2Prob = probs[i];
+          }
+        }
+
+        final margin = top1Prob - top2Prob;
+        if (top1Prob >= 0.45 && margin >= 0.04 && top1Idx < _medicalLabels.length) {
+          final rawWord = _medicalLabels[top1Idx];
+          final displayWord = _formatMedicalPhrase(rawWord);
+
+          if (displayWord == _medCandidate) {
+            _medCandidateCount++;
+          } else {
+            _medCandidate = displayWord;
+            _medCandidateCount = 1;
+          }
+
+          if (_medCandidateCount >= 2) {
+            final now = DateTime.now();
+            final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
+            final isSameWord = (displayWord == _lastEmittedLabel);
+            final requiredDelay = isSameWord ? 2000 : 900;
+
+            if (elapsed > requiredDelay) {
+              _lastEmittedLabel = displayWord;
+              _lastEmittedTime = now;
+              _predictionsController.add(
+                SignResult(
+                  label: displayWord,
+                  confidence: top1Prob,
+                  timestamp: now,
+                  source: 'fsl_medical_model',
+                ),
+              );
+            }
+          }
+        } else {
+          _medCandidateCount = math.max(0, _medCandidateCount - 1);
+        }
+      } catch (e) {
+        debugPrint('[TfliteRecognitionService] Medical ST-GCN inference error: $e');
+      }
+    }
+  }
+
+  /// Formats raw medical signs to bilingual clinical & patient-friendly labels
+  static String _formatMedicalPhrase(String sign) {
+    switch (sign.trim()) {
+      case 'Alin':
+        return 'Alin (Which)';
+      case 'Allergic':
+        return 'Allergic (Allergy)';
+      case 'Ano':
+        return 'Ano (What)';
+      case 'Bahing':
+        return 'Bahing (Sneezing)';
+      case 'Doktor':
+        return 'Doktor (Doctor)';
+      case 'Edad':
+        return 'Edad (Age)';
+      case 'Ikaw':
+        return 'Ikaw (You)';
+      case 'Ilan':
+        return 'Ilan (How many)';
+      case 'Kailan':
+        return 'Kailan (When)';
+      case 'Lagnat':
+        return 'Lagnat (Fever)';
+      case 'Magkano':
+        return 'Magkano (How much)';
+      case 'Nahihilo':
+        return 'Nahihilo (Dizzy)';
+      case 'Nahihirapan Huminga':
+        return 'Nahihirapan Huminga (Shortness of breath)';
+      case 'Pakiramdam':
+        return 'Pakiramdam (Condition / Feeling)';
+      case 'Salamat':
+        return 'Salamat (Thank you)';
+      case 'Sino':
+        return 'Sino (Who)';
+      case 'Sipon':
+        return 'Sipon (Cold / Runny nose)';
+      default:
+        return sign;
+    }
+  }
+
   /// Linearly resamples buffer to exact 60-frame ST-GCN tensor input
   List<List<List<double>>> _resampleSequence(List<List<List<double>>> buffer, int targetLength) {
     if (buffer.length == targetLength) return buffer;
@@ -735,5 +911,6 @@ class TfliteRecognitionService implements RecognitionService {
     _landmarkStreamController.close();
     _alphabetInterpreter?.close();
     _fslModelInterpreter?.close();
+    _medicalModelInterpreter?.close();
   }
 }

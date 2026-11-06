@@ -132,5 +132,13 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    test('defaults keepScreenAwake to true and persists user preference', () async {
+      expect(settings.keepScreenAwake, isTrue);
+      await settings.setKeepScreenAwake(false);
+      expect(settings.keepScreenAwake, isFalse);
+      await settings.setKeepScreenAwake(true);
+      expect(settings.keepScreenAwake, isTrue);
+    });
   });
 }

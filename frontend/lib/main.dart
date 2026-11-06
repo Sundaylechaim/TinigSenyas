@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/recognition_provider.dart';
@@ -89,6 +90,7 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   late int _currentIndex;
   late final Set<int> _visitedTabs;
+  DateTime? _lastBackPressTime;
 
   @override
   void initState() {
@@ -110,12 +112,42 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: List.generate(4, _screenForTab),
-      ),
-      bottomNavigationBar: Container(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_currentIndex != 0) {
+          // Gracefully return to Home tab if on History/Speech/Settings
+          setState(() {
+            _currentIndex = 0;
+            _visitedTabs.add(0);
+          });
+          return;
+        }
+        // If already on Home tab, require a double-back press within 2 seconds to exit cleanly
+        final now = DateTime.now();
+        if (_lastBackPressTime == null ||
+            now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
+          _lastBackPressTime = now;
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Press back again to exit TinigSenyas'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        }
+        // Clean and safe application exit
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
+        body: IndexedStack(
+          index: _currentIndex,
+          children: List.generate(4, _screenForTab),
+        ),
+        bottomNavigationBar: Container(
         decoration: BoxDecoration(
           border: Border(
             top: BorderSide(
@@ -159,6 +191,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

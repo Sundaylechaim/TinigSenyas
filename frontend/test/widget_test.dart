@@ -35,9 +35,9 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    expect(find.text('TinigSenyas'), findsOneWidget);
-    expect(find.text('SIGN TO TEXT'), findsOneWidget);
-    expect(find.text('SPEECH TO TEXT'), findsOneWidget);
+    expect(find.text('TinigSenyas'), findsWidgets);
+    expect(find.text('Sign to Text & Voice'), findsOneWidget);
+    expect(find.text('Speech to Text & Signs'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     connectivity.dispose();
@@ -75,7 +75,7 @@ void main() {
     }
 
     expect(
-      Theme.of(tester.element(find.text('TinigSenyas'))).brightness,
+      Theme.of(tester.element(find.text('TinigSenyas').first)).brightness,
       Brightness.light,
     );
     await tester.tap(find.byTooltip('Open navigation menu'));

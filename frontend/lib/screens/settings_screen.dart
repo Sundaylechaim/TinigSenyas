@@ -203,52 +203,92 @@ class _SettingsScreenState extends State<SettingsScreen> {
               physics: const BouncingScrollPhysics(),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               children: [
-          // Theme Section
-          _SectionHeader('Appearance'),
+          // 1. Core AI Recognition Model (Highest Priority)
+          const _SectionHeader('FSL Recognition Model', icon: Icons.psychology_outlined),
           _SettingsTile(
-            title: 'Dark Mode',
-            subtitle: 'Choose theme',
-            trailing: DropdownButton<ThemeMode>(
-              value: themeProvider.themeMode,
-              items: const [
-                DropdownMenuItem(
-                  value: ThemeMode.system,
-                  child: Text('System'),
+            icon: Icons.memory_outlined,
+            title: 'Model Version',
+            subtitle: _modelVersion == 'Not installed'
+                ? 'The FSL recognition model is still in training'
+                : _modelVersion,
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: _modelVersion == 'Not installed'
+                    ? Colors.amber.withValues(alpha: 0.15)
+                    : Colors.green.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _modelVersion == 'Not installed' ? 'Training' : 'Active',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: _modelVersion == 'Not installed'
+                      ? Colors.amber[800]
+                      : Colors.green[700],
                 ),
-                DropdownMenuItem(value: ThemeMode.light, child: Text('Light')),
-                DropdownMenuItem(value: ThemeMode.dark, child: Text('Dark')),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  themeProvider.setThemeMode(value);
-                }
-              },
-              underline: const SizedBox(),
+              ),
             ),
           ),
           _SettingsTile(
-            title: 'Text Size',
-            subtitle: 'Adjust text scaling',
-            trailing: SizedBox(
-              width: 150,
-              child: Slider(
-                value: _textScale,
-                min: 0.8,
-                max: 1.4,
-                divisions: 6,
-                label: '${(_textScale * 100).toInt()}%',
-                onChanged: (value) async {
-                  setState(() => _textScale = value);
-                  await _settingsService.setTextScaleFactor(value);
-                },
+            icon: Icons.cloud_sync_outlined,
+            title: 'Check for Model Updates (OTA)',
+            subtitle: 'Fetch latest FSL recognition model over the air',
+            trailing: const Icon(Icons.cloud_download_outlined),
+            onTap: () {
+              final messenger = ScaffoldMessenger.of(context);
+              final serverUrl = _settingsService.ttsServerUrl;
+              final otaManifestUrl = serverUrl.isNotEmpty
+                  ? '$serverUrl/api/v1/ota/manifest'
+                  : ModelUpdater.defaultRemoteManifestUrl;
+              final updater = ModelUpdater(remoteManifestUrl: otaManifestUrl);
+              showDialog(
+                context: context,
+                builder: (context) => ModelUpdateDialog(
+                  modelUpdater: updater,
+                  onUpdateComplete: () async {
+                    final newVersion = await updater.getInstalledVersion();
+                    await _settingsService.setModelVersion(newVersion);
+                    if (!mounted) return;
+                    setState(() {
+                      _modelVersion = newVersion;
+                    });
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Model updated to $newVersion')),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+          _SettingsTile(
+            icon: Icons.layers_outlined,
+            title: 'Active Models & Datasets',
+            subtitle: 'Conversational (103 signs) • A–Z Alphabet • Medical & Symptoms (25 signs)',
+            trailing: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0138FF).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                '3 Engines',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF0138FF),
+                ),
               ),
             ),
           ),
 
-          const SizedBox(height: 24),
-          // TTS Section
-          _SectionHeader('Text-to-Speech'),
+          const SizedBox(height: 16),
+
+          // 2. Speech & Voice Output (Text-to-Speech)
+          const _SectionHeader('Speech & Voice (Text-to-Speech)', icon: Icons.record_voice_over_outlined),
           _SettingsTile(
+            icon: Icons.language_outlined,
             title: 'Language',
             subtitle: 'TTS voice language',
             trailing: DropdownButton<String>(
@@ -292,7 +332,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           _SettingsTile(
-            title: 'Voice source',
+            icon: Icons.record_voice_over_outlined,
+            title: 'Voice',
+            subtitle: _isLoadingVoices
+                ? 'Loading device voices...'
+                : !hasLanguageVoice
+                ? _ttsServerUrl.isNotEmpty &&
+                          _ttsLanguage.toLowerCase().startsWith('fil')
+                      ? 'No local Filipino voice; online Filipino speech is available'
+                      : 'No ${_ttsLanguageName(_ttsLanguage)} voice is installed. Add its speech data in device or browser settings.'
+                : 'Female voice selected automatically when the device identifies one',
+            trailing: _isLoadingVoices
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : SizedBox(
+                    width: 170,
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value: _selectedTtsVoice == null
+                          ? ''
+                          : _voiceKey(_selectedTtsVoice!),
+                      items: [
+                        const DropdownMenuItem(
+                          value: '',
+                          child: Text('Automatic'),
+                        ),
+                        ...languageVoices.asMap().entries.map(
+                          (entry) => DropdownMenuItem(
+                            value: _voiceKey(entry.value),
+                            child: Text(
+                              _voiceLabel(entry.value, entry.key + 1),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: !hasLanguageVoice ? null : _selectTtsVoice,
+                      underline: const SizedBox(),
+                    ),
+                  ),
+          ),
+          _SettingsTile(
+            icon: Icons.speed_outlined,
+            title: 'Speech Rate',
+            subtitle: 'Adjust speaking speed',
+            trailing: SizedBox(
+              width: 140,
+              child: Slider(
+                value: _ttsRate,
+                min: 0.3,
+                max: 0.8,
+                divisions: 5,
+                label: _ttsRate.toStringAsFixed(1),
+                onChanged: (value) async {
+                  setState(() => _ttsRate = value);
+                  final ttsService = context.read<TtsService>();
+                  try {
+                    await ttsService.setRate(value);
+                  } catch (error) {
+                    _showError('Could not change speech rate: $error');
+                  }
+                },
+              ),
+            ),
+          ),
+          _SettingsTile(
+            icon: Icons.volume_up_outlined,
+            title: 'Test Voice',
+            subtitle: 'Hear current speech rate and voice',
+            trailing: IconButton(
+              icon: const Icon(Icons.play_circle_fill_outlined, color: _kAppBlue, size: 28),
+              onPressed: _testVoice,
+            ),
+          ),
+          _SettingsTile(
+            icon: Icons.tune_outlined,
+            title: 'Voice Source',
             subtitle: switch (_ttsSource) {
               'online' => 'Microsoft online voice; text is sent to Microsoft',
               'offline_english' => 'Offline English neural female voice',
@@ -345,6 +463,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
             _SettingsTile(
+              icon: Icons.download_for_offline_outlined,
               title: 'Offline English female voice',
               subtitle: _offlineEnglishVoiceInstalled
                   ? 'Ready offline. Select English (US) to use it.'
@@ -353,7 +472,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   SizedBox(
-                    width: 130,
+                    width: 125,
                     child: DropdownButton<String>(
                       isExpanded: true,
                       value: _ttsOfflineEnglishVoice,
@@ -411,6 +530,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           if (_ttsServerUrl.isNotEmpty)
             _SettingsTile(
+              icon: Icons.cloud_outlined,
               title: 'Filipino speech service',
               subtitle: 'Using $_ttsServerUrl',
               trailing: TextButton(
@@ -420,6 +540,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           if (_ttsLanguage.toLowerCase().startsWith('fil'))
             _SettingsTile(
+              icon: Icons.spatial_audio_off_outlined,
               title: 'Online Filipino voice',
               subtitle: 'Female and male neural voices',
               trailing: DropdownButton<String>(
@@ -446,53 +567,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 underline: const SizedBox(),
               ),
             ),
-          _SettingsTile(
-            title: 'Voice',
-            subtitle: _isLoadingVoices
-                ? 'Loading device voices...'
-                : !hasLanguageVoice
-                ? _ttsServerUrl.isNotEmpty &&
-                          _ttsLanguage.toLowerCase().startsWith('fil')
-                      ? 'No local Filipino voice; online Filipino speech is available'
-                      : 'No ${_ttsLanguageName(_ttsLanguage)} voice is installed. Add its speech data in device or browser settings.'
-                : 'Female voice selected automatically when the device identifies one',
-            trailing: _isLoadingVoices
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : SizedBox(
-                    width: 180,
-                    child: DropdownButton<String>(
-                      isExpanded: true,
-                      value: _selectedTtsVoice == null
-                          ? ''
-                          : _voiceKey(_selectedTtsVoice!),
-                      items: [
-                        const DropdownMenuItem(
-                          value: '',
-                          child: Text('Automatic'),
-                        ),
-                        ...languageVoices.asMap().entries.map(
-                          (entry) => DropdownMenuItem(
-                            value: _voiceKey(entry.value),
-                            child: Text(
-                              _voiceLabel(entry.value, entry.key + 1),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      ],
-                      onChanged: !hasLanguageVoice ? null : _selectTtsVoice,
-                      underline: const SizedBox(),
-                    ),
-                  ),
-          ),
           if (_ttsLanguage.toLowerCase().startsWith('fil') &&
               !kIsWeb &&
               defaultTargetPlatform == TargetPlatform.android)
             _SettingsTile(
+              icon: Icons.downloading_outlined,
               title: 'Offline Filipino voice',
               subtitle: hasLanguageVoice
                   ? 'Device Filipino voice is available'
@@ -512,95 +591,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
-          _SettingsTile(
-            title: 'Speech Rate',
-            subtitle: 'Adjust speaking speed',
-            trailing: SizedBox(
-              width: 150,
-              child: Slider(
-                value: _ttsRate,
-                min: 0.3,
-                max: 0.8,
-                divisions: 5,
-                label: _ttsRate.toStringAsFixed(1),
-                onChanged: (value) async {
-                  setState(() => _ttsRate = value);
-                  final ttsService = context.read<TtsService>();
-                  try {
-                    await ttsService.setRate(value);
-                  } catch (error) {
-                    _showError('Could not change speech rate: $error');
-                  }
-                },
-              ),
-            ),
-          ),
-          _SettingsTile(
-            title: 'Test Voice',
-            subtitle: 'Hear the current TTS settings',
-            trailing: IconButton(
-              icon: const Icon(Icons.volume_up),
-              onPressed: _testVoice,
-            ),
-          ),
 
-          const SizedBox(height: 24),
-          // Model Section
-          _SectionHeader('Model'),
-          _SettingsTile(
-            title: 'Model Version',
-            subtitle: _modelVersion == 'Not installed'
-                ? 'The FSL recognition model is still in training'
-                : _modelVersion,
-          ),
-          _SettingsTile(
-            title: 'Check for Model Updates (OTA)',
-            subtitle: 'Fetch latest FSL recognition model over the air',
-            trailing: const Icon(Icons.cloud_download_outlined),
-            onTap: () {
-              final messenger = ScaffoldMessenger.of(context);
-              final serverUrl = _settingsService.ttsServerUrl;
-              final otaManifestUrl = serverUrl.isNotEmpty
-                  ? '$serverUrl/api/v1/ota/manifest'
-                  : ModelUpdater.defaultRemoteManifestUrl;
-              final updater = ModelUpdater(remoteManifestUrl: otaManifestUrl);
-              showDialog(
-                context: context,
-                builder: (context) => ModelUpdateDialog(
-                  modelUpdater: updater,
-                  onUpdateComplete: () async {
-                    final newVersion = await updater.getInstalledVersion();
-                    await _settingsService.setModelVersion(newVersion);
-                    if (!mounted) return;
-                    setState(() {
-                      _modelVersion = newVersion;
-                    });
-                    messenger.showSnackBar(
-                      SnackBar(content: Text('Model updated to $newVersion')),
-                    );
-                  },
-                ),
-              );
-            },
-          ),
+          const SizedBox(height: 16),
 
-          const SizedBox(height: 24),
-          // Data Section
-          _SectionHeader('Data & Privacy'),
+          // 3. Permissions & Privacy (Essential for Camera & Mic Recognition)
+          const _SectionHeader('Permissions & Privacy', icon: Icons.security_outlined),
           _SettingsTile(
-            title: 'Save History (Private Mode)',
-            subtitle: _settingsService.saveHistoryEnabled
-                ? 'Conversation history is stored in local database'
-                : 'Private Mode active: translations are not saved to database',
-            trailing: Switch(
-              value: _settingsService.saveHistoryEnabled,
-              onChanged: (val) async {
-                await _settingsService.setSaveHistoryEnabled(val);
-                if (mounted) setState(() {});
-              },
-            ),
-          ),
-          _SettingsTile(
+            icon: Icons.videocam_outlined,
             title: 'Audio/Visual Recording Consent',
             subtitle: _settingsService.hasRecordingConsent
                 ? 'Consent granted for microphone audio & camera recognition'
@@ -614,32 +611,116 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           _SettingsTile(
+            icon: Icons.visibility_off_outlined,
+            title: 'Save History (Private Mode)',
+            subtitle: _settingsService.saveHistoryEnabled
+                ? 'Conversation history is stored in local database'
+                : 'Private Mode active: translations are not saved to database',
+            trailing: Switch(
+              value: _settingsService.saveHistoryEnabled,
+              onChanged: (val) async {
+                await _settingsService.setSaveHistoryEnabled(val);
+                if (mounted) setState(() {});
+              },
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 4. Accessibility & Display
+          const _SectionHeader('Accessibility & Display', icon: Icons.palette_outlined),
+          _SettingsTile(
+            icon: Icons.format_size_outlined,
+            title: 'Text Size',
+            subtitle: 'Adjust text scaling for readability',
+            trailing: SizedBox(
+              width: 140,
+              child: Slider(
+                value: _textScale,
+                min: 0.8,
+                max: 1.4,
+                divisions: 6,
+                label: '${(_textScale * 100).toInt()}%',
+                onChanged: (value) async {
+                  setState(() => _textScale = value);
+                  await _settingsService.setTextScaleFactor(value);
+                },
+              ),
+            ),
+          ),
+          _SettingsTile(
+            icon: Icons.dark_mode_outlined,
+            title: 'Theme Mode',
+            subtitle: 'Choose light, dark, or system theme',
+            trailing: DropdownButton<ThemeMode>(
+              value: themeProvider.themeMode,
+              items: const [
+                DropdownMenuItem(
+                  value: ThemeMode.system,
+                  child: Text('System'),
+                ),
+                DropdownMenuItem(value: ThemeMode.light, child: Text('Light')),
+                DropdownMenuItem(value: ThemeMode.dark, child: Text('Dark')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  themeProvider.setThemeMode(value);
+                }
+              },
+              underline: const SizedBox(),
+            ),
+          ),
+          _SettingsTile(
+            icon: Icons.stay_current_portrait_outlined,
+            title: 'Keep Screen Awake',
+            subtitle: _settingsService.keepScreenAwake
+                ? 'Screen stays on during active sign recognition'
+                : 'Screen uses normal system timeout',
+            trailing: Switch(
+              value: _settingsService.keepScreenAwake,
+              onChanged: (val) async {
+                await _settingsService.setKeepScreenAwake(val);
+                if (mounted) setState(() {});
+              },
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // 5. Data Management
+          const _SectionHeader('Data Management', icon: Icons.folder_open_outlined),
+          _SettingsTile(
+            icon: Icons.file_download_outlined,
             title: 'Export History',
             subtitle: 'Export translation history as CSV',
-            trailing: const Icon(Icons.download),
+            trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
             onTap: _exportHistory,
           ),
           _SettingsTile(
+            icon: Icons.delete_outline_rounded,
+            iconColor: Colors.redAccent,
             title: 'Clear History',
             subtitle: 'Delete all translation history',
-            trailing: const Icon(Icons.delete_outline, color: Colors.red),
+            trailing: const Icon(Icons.delete_outline, color: Colors.redAccent),
             onTap: _clearHistory,
           ),
           _SettingsTile(
+            icon: Icons.cleaning_services_outlined,
             title: 'Clear Cache',
             subtitle: 'Remove exported history files',
-            trailing: const Icon(Icons.cleaning_services),
+            trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
             onTap: _clearCache,
           ),
 
-          const SizedBox(height: 24),
-          // Legal & About Section
-          _SectionHeader('About'),
+          const SizedBox(height: 16),
 
+          // 6. About & Help
+          const _SectionHeader('About & Help', icon: Icons.info_outline),
           _SettingsTile(
+            icon: Icons.explore_outlined,
             title: 'Welcome & Landing Page',
             subtitle: 'Revisit introduction, quick phrases & controls',
-            trailing: const Icon(Icons.chevron_right),
+            trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () {
               Navigator.push(
                 context,
@@ -648,14 +729,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           _SettingsTile(
+            icon: Icons.info_outline_rounded,
             title: 'Version',
             subtitle: '1.1.0',
             onTap: () => _showAboutDialog('Version'),
           ),
           _SettingsTile(
+            icon: Icons.policy_outlined,
             title: 'Licenses',
             subtitle: 'Open source licenses',
-            trailing: const Icon(Icons.chevron_right),
+            trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () => showLicensePage(context: context),
           ),
           const SizedBox(height: 24),
@@ -961,13 +1044,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
 class _SectionHeader extends StatelessWidget {
   final String title;
-  const _SectionHeader(this.title);
+  final IconData? icon;
+  const _SectionHeader(this.title, {this.icon});
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final accentColor = isDark ? const Color(0xFF60A5FA) : _kAppBlue;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8, top: 14, left: 4),
+      padding: const EdgeInsets.only(bottom: 8, top: 16, left: 4),
       child: Row(
         children: [
           Container(
@@ -979,13 +1064,17 @@ class _SectionHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
+          if (icon != null) ...[
+            Icon(icon, size: 16, color: accentColor),
+            const SizedBox(width: 6),
+          ],
           Text(
-            title,
+            title.toUpperCase(),
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
-              letterSpacing: 0.5,
-              color: isDark ? const Color(0xFF60A5FA) : _kAppBlue,
+              letterSpacing: 0.6,
+              color: accentColor,
             ),
           ),
         ],
@@ -995,12 +1084,16 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _SettingsTile extends StatelessWidget {
+  final IconData? icon;
+  final Color? iconColor;
   final String title;
   final String? subtitle;
   final Widget? trailing;
   final VoidCallback? onTap;
 
   const _SettingsTile({
+    this.icon,
+    this.iconColor,
     required this.title,
     this.subtitle,
     this.trailing,
@@ -1010,6 +1103,8 @@ class _SettingsTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final effectiveIconColor =
+        iconColor ?? (isDark ? const Color(0xFF93C5FD) : _kAppBlue);
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -1033,6 +1128,23 @@ class _SettingsTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         child: ListTile(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          leading: icon != null
+              ? Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: effectiveIconColor.withValues(
+                      alpha: isDark ? 0.20 : 0.08,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 20,
+                    color: effectiveIconColor,
+                  ),
+                )
+              : null,
           title: Text(
             title,
             style: TextStyle(

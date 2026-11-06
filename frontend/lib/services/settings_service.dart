@@ -23,6 +23,7 @@ class SettingsService extends ChangeNotifier {
   static const _ageVerificationKey = 'age_verification_status';
   static const _cipaRecordingConsentKey = 'cipa_recording_consent';
   static const _saveHistoryEnabledKey = 'save_history_enabled';
+  static const _keepScreenAwakeKey = 'keep_screen_awake';
 
   SharedPreferences? _prefs;
 
@@ -250,6 +251,14 @@ class SettingsService extends ChangeNotifier {
 
   Future<void> setSaveHistoryEnabled(bool enabled) async {
     await _prefs?.setBool(_saveHistoryEnabledKey, enabled);
+    notifyListeners();
+  }
+
+  // Display: Prevent screen timeout while signing
+  bool get keepScreenAwake => _prefs?.getBool(_keepScreenAwakeKey) ?? true;
+
+  Future<void> setKeepScreenAwake(bool enabled) async {
+    await _prefs?.setBool(_keepScreenAwakeKey, enabled);
     notifyListeners();
   }
 }

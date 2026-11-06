@@ -1,9 +1,9 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
   "sha256": "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
   "min_app_version": "1.0.0",
-  "notes": "Updated 28-class FSL alphabet fingerspelling model (A-Z, Ng, Ñ) and conversational ST-GCN gestures.",
+  "notes": "Added dedicated 25-class Medical FSL ST-GCN model alongside alphabet and conversational signs.",
   "models": [
     {
       "name": "fsl_alphabet.tflite",
@@ -14,6 +14,11 @@
       "name": "fsl_model.tflite",
       "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
       "sha256": "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4"
+    },
+    {
+      "name": "fsl_medical.tflite",
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_medical.tflite",
+      "sha256": "b0825c8fb7cc35fae8171ea5532fc75b247bb9cc1b62afd1fa4fbfb25cd4ab20"
     }
   ]
 }

@@ -30,6 +30,8 @@ CLASSES_PATH = os.path.join(MODELS_DIR, "classes.npy")
 TFLITE_PATH = os.path.join(MODELS_DIR, "fsl_model.tflite")
 ALPHABET_CLASSES_PATH = os.path.join(MODELS_DIR, "alphabet_classes.npy")
 ALPHABET_TFLITE_PATH = os.path.join(MODELS_DIR, "fsl_alphabet.tflite")
+MEDICAL_CLASSES_PATH = os.path.join(MODELS_DIR, "medical_classes.npy")
+MEDICAL_TFLITE_PATH = os.path.join(MODELS_DIR, "fsl_medical.tflite")
 HAND_LANDMARKER_PATH = os.path.join(MODELS_DIR, "hand_landmarker.task")
 POSE_LANDMARKER_PATH = os.path.join(MODELS_DIR, "pose_landmarker_lite.task")
 

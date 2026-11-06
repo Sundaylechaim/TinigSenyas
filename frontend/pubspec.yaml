@@ -38,6 +38,7 @@ dependencies:
   crypto: ^3.0.7
   sqflite_common_ffi_web: ^1.2.0
   shorebird_code_push: ^2.0.7
+  wakelock_plus: ^1.8.0
 
 dev_dependencies:
   flutter_test:
@@ -54,6 +55,8 @@ flutter:
     - assets/model/version.txt
     - assets/model/manifest.json
     - assets/model/labels.txt
+    - assets/model/medical_labels.txt
     - assets/model/fsl_model.tflite
     - assets/model/fsl_alphabet.tflite
+    - assets/model/fsl_medical.tflite
     - shorebird.yaml

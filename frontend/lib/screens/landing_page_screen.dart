@@ -131,29 +131,11 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
               )
             : Container(
                 margin: const EdgeInsets.only(left: 14),
-                alignment: Alignment.center,
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: _kAppBlue.withValues(alpha: 0.15),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: _kAppBlue.withValues(alpha: 0.2),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.all(3),
-                  child: Image.asset(
-                    'assets/images/logo.png',
-                    fit: BoxFit.contain,
-                  ),
+                alignment: Alignment.centerLeft,
+                child: Image.asset(
+                  'assets/images/logo.png',
+                  height: 32,
+                  fit: BoxFit.contain,
                 ),
               ),
         title: Column(
@@ -442,28 +424,10 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
         children: [
           // Official Brand Logo Showcase
           Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(
-                  color: _kAppYellow.withValues(alpha: 0.6),
-                  width: 2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.18),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Image.asset(
-                'assets/images/logo.png',
-                height: 115,
-                fit: BoxFit.contain,
-              ),
+            child: Image.asset(
+              'assets/images/logo.png',
+              height: 110,
+              fit: BoxFit.contain,
             ),
           ),
           const SizedBox(height: 16),

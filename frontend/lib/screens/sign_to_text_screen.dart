@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:provider/provider.dart';
 import 'package:camera/camera.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../providers/recognition_provider.dart';
 import '../services/camera_service.dart';
 import '../services/tts_service.dart';
@@ -64,6 +65,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
           _currentMode = RecognitionMode.alphabet;
           break;
         case RecognitionMode.alphabet:
+          _currentMode = RecognitionMode.medical;
+          break;
+        case RecognitionMode.medical:
           _currentMode = RecognitionMode.auto;
           break;
       }
@@ -73,7 +77,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
         ? 'Phrases (Kamusta/Hello, Salamat, etc.)'
         : _currentMode == RecognitionMode.alphabet
             ? 'Alphabet (A to Z Letters)'
-            : 'Auto (Phrases & Alphabet)';
+            : _currentMode == RecognitionMode.medical
+                ? 'Medical & Health (Lagnat, Doktor, Sipon, etc.)'
+                : 'Auto (Phrases, Alphabet & Medical)';
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -146,6 +152,25 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       _useBackendFeed = false;
       _checkPermissionAndStart();
     }
+
+    _updateWakelock(true);
+  }
+
+  Future<void> _updateWakelock(bool enable) async {
+    try {
+      if (enable) {
+        final keepAwake = context.read<SettingsService>().keepScreenAwake;
+        if (keepAwake) {
+          await WakelockPlus.enable();
+        } else {
+          await WakelockPlus.disable();
+        }
+      } else {
+        await WakelockPlus.disable();
+      }
+    } catch (e) {
+      debugPrint('WakelockPlus error: $e');
+    }
   }
 
   Future<void> _detectWebFeedMode() async {
@@ -195,11 +220,13 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     if (kIsWeb) return;
 
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      _updateWakelock(false);
       _cameraService.dispose();
       if (mounted) {
         setState(() => _isCameraInitialized = false);
       }
     } else if (state == AppLifecycleState.resumed) {
+      _updateWakelock(true);
       if (!_useBackendFeed) {
         // Re-check permission and restart camera when returning from settings or background
         _checkPermissionAndStart();
@@ -729,6 +756,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
 
   @override
   void dispose() {
+    try {
+      WakelockPlus.disable();
+    } catch (_) {}
     WidgetsBinding.instance.removeObserver(this);
     _predictionSubscription?.cancel();
     _pauseSubscription?.cancel();
@@ -1962,7 +1992,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                               ? Icons.chat_bubble_outline_rounded
                               : _currentMode == RecognitionMode.alphabet
                                   ? Icons.spellcheck_rounded
-                                  : Icons.auto_mode_rounded,
+                                  : _currentMode == RecognitionMode.medical
+                                      ? Icons.medical_services_rounded
+                                      : Icons.auto_mode_rounded,
                           size: 15,
                           color: _kAppBlue,
                         ),
@@ -1972,7 +2004,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                               ? 'Phrases'
                               : _currentMode == RecognitionMode.alphabet
                                   ? 'A–Z'
-                                  : 'Auto',
+                                  : _currentMode == RecognitionMode.medical
+                                      ? 'Medical'
+                                      : 'Auto',
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -2146,7 +2180,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                                 _GuideTipCard(
                                   icon: Icons.toggle_on_rounded,
                                   title: 'Use Mode Switch for High Accuracy',
-                                  description: 'Tap "Mode" (top pill) to switch to "A–Z" for precise spelling (names, places) or "Phrases" for conversational signs.',
+                                  description: 'Tap "Mode" (top pill) to switch to "A–Z" for fingerspelling, "Phrases" for everyday signs, or "Medical" for health & clinical signs.',
                                 ),
                                 _GuideTipCard(
                                   icon: Icons.speed_rounded,

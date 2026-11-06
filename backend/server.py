@@ -148,7 +148,15 @@ _OTA_ALPHABET_SHA256 = os.environ.get(
     "OTA_ALPHABET_SHA256",
     "33e45a06f2a133969d50554211e280ddf040825478e6e748e4d63b7ec2de4b97",
 )
-_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.1.0")
+_OTA_MEDICAL_URL = os.environ.get(
+    "OTA_MEDICAL_URL",
+    "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_medical.tflite",
+)
+_OTA_MEDICAL_SHA256 = os.environ.get(
+    "OTA_MEDICAL_SHA256",
+    "b0825c8fb7cc35fae8171ea5532fc75b247bb9cc1b62afd1fa4fbfb25cd4ab20",
+)
+_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.2.0")
 
 
 @app.get("/api/v1/ota/manifest", response_model=ModelManifest, tags=["OTA Updates"])
@@ -172,6 +180,11 @@ async def get_model_manifest():
                 name="fsl_model.tflite",
                 url=_OTA_MODEL_URL,
                 sha256=_OTA_MODEL_SHA256,
+            ),
+            ModelFileItem(
+                name="fsl_medical.tflite",
+                url=_OTA_MEDICAL_URL,
+                sha256=_OTA_MEDICAL_SHA256,
             ),
         ],
     )

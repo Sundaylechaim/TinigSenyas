@@ -7,6 +7,7 @@ enum RecognitionMode {
   auto,
   alphabet,
   phrases,
+  medical,
 }
 
 abstract class RecognitionService {
