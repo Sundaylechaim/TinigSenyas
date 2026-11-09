@@ -111,6 +111,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         elevation: 0,
         scrolledUnderElevation: 0,
         backgroundColor: Colors.transparent,
+        centerTitle: false,
+        titleSpacing: 16,
         flexibleSpace: ClipRect(
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
@@ -134,12 +136,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Settings',
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 19,
-                letterSpacing: -0.4,
+            const Flexible(
+              child: Text(
+                'Settings',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  letterSpacing: -0.4,
+                ),
               ),
             ),
             const SizedBox(width: 5),
@@ -291,44 +297,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.language_outlined,
             title: 'Language',
             subtitle: 'TTS voice language',
-            trailing: DropdownButton<String>(
-              value: _ttsLanguage,
-              items: const [
-                DropdownMenuItem(
-                  value: 'en-PH',
-                  child: Text('English (Philippines)'),
-                ),
-                DropdownMenuItem(value: 'en-US', child: Text('English (US)')),
-                DropdownMenuItem(value: 'en-GB', child: Text('English (UK)')),
-                DropdownMenuItem(value: 'fil-PH', child: Text('Filipino')),
-              ],
-              onChanged: (value) async {
-                if (value != null) {
-                  setState(() => _ttsLanguage = value);
-                  final ttsService = context.read<TtsService>();
-                  try {
-                    if (_ttsSource == 'offline_english' &&
-                        value.toLowerCase() != 'en-us') {
-                      await _settingsService.setTtsSource('offline');
-                      if (mounted) setState(() => _ttsSource = 'offline');
+            bottom: _buildDropdownContainer(
+              isDark: isDark,
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: _ttsLanguage,
+                items: const [
+                  DropdownMenuItem(
+                    value: 'en-PH',
+                    child: Text('English (Philippines)'),
+                  ),
+                  DropdownMenuItem(value: 'en-US', child: Text('English (US)')),
+                  DropdownMenuItem(value: 'en-GB', child: Text('English (UK)')),
+                  DropdownMenuItem(value: 'fil-PH', child: Text('Filipino')),
+                ],
+                onChanged: (value) async {
+                  if (value != null) {
+                    setState(() => _ttsLanguage = value);
+                    final ttsService = context.read<TtsService>();
+                    try {
+                      if (_ttsSource == 'offline_english' &&
+                          value.toLowerCase() != 'en-us') {
+                        await _settingsService.setTtsSource('offline');
+                        if (mounted) setState(() => _ttsSource = 'offline');
+                      }
+                      await ttsService.setLanguage(value);
+                      if (mounted) {
+                        setState(
+                          () => _selectedTtsVoice = _settingsService.ttsVoice,
+                        );
+                      }
+                    } catch (error) {
+                      if (mounted) {
+                        setState(
+                          () => _ttsLanguage = _settingsService.ttsLanguage,
+                        );
+                      }
+                      _showError('Could not change voice language: $error');
                     }
-                    await ttsService.setLanguage(value);
-                    if (mounted) {
-                      setState(
-                        () => _selectedTtsVoice = _settingsService.ttsVoice,
-                      );
-                    }
-                  } catch (error) {
-                    if (mounted) {
-                      setState(
-                        () => _ttsLanguage = _settingsService.ttsLanguage,
-                      );
-                    }
-                    _showError('Could not change voice language: $error');
                   }
-                }
-              },
-              underline: const SizedBox(),
+                },
+              ),
             ),
           ),
           _SettingsTile(
@@ -342,15 +351,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ? 'No local Filipino voice; online Filipino speech is available'
                       : 'No ${_ttsLanguageName(_ttsLanguage)} voice is installed. Add its speech data in device or browser settings.'
                 : 'Female voice selected automatically when the device identifies one',
-            trailing: _isLoadingVoices
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : SizedBox(
-                    width: 170,
-                    child: DropdownButton<String>(
+            bottom: _buildDropdownContainer(
+              isDark: isDark,
+              child: _isLoadingVoices
+                  ? const SizedBox(
+                      height: 38,
+                      child: Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    )
+                  : DropdownButton<String>(
                       isExpanded: true,
                       value: _selectedTtsVoice == null
                           ? ''
@@ -358,7 +372,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       items: [
                         const DropdownMenuItem(
                           value: '',
-                          child: Text('Automatic'),
+                          child: Text('Automatic Voice Selection'),
                         ),
                         ...languageVoices.asMap().entries.map(
                           (entry) => DropdownMenuItem(
@@ -371,32 +385,108 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ],
                       onChanged: !hasLanguageVoice ? null : _selectTtsVoice,
-                      underline: const SizedBox(),
                     ),
-                  ),
+            ),
           ),
-          _SettingsTile(
-            icon: Icons.speed_outlined,
-            title: 'Speech Rate',
-            subtitle: 'Adjust speaking speed',
-            trailing: SizedBox(
-              width: 140,
-              child: Slider(
-                value: _ttsRate,
-                min: 0.3,
-                max: 0.8,
-                divisions: 5,
-                label: _ttsRate.toStringAsFixed(1),
-                onChanged: (value) async {
-                  setState(() => _ttsRate = value);
-                  final ttsService = context.read<TtsService>();
-                  try {
-                    await ttsService.setRate(value);
-                  } catch (error) {
-                    _showError('Could not change speech rate: $error');
-                  }
-                },
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF141F36) : Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: isDark ? const Color(0xFF223253) : const Color(0xFFE2E8F0),
+                width: 1.2,
               ),
+              boxShadow: [
+                BoxShadow(
+                  color: isDark ? Colors.black.withValues(alpha: 0.15) : _kAppBlue.withValues(alpha: 0.03),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: (isDark ? const Color(0xFF93C5FD) : _kAppBlue).withValues(
+                          alpha: isDark ? 0.20 : 0.08,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.speed_outlined,
+                        size: 20,
+                        color: isDark ? const Color(0xFF93C5FD) : _kAppBlue,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Speech Rate',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                              color: isDark ? Colors.white : const Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Adjust speaking speed',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _kAppBlue.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${_ttsRate.toStringAsFixed(1)}x',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: _kAppBlue,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Slider(
+                  activeColor: _kAppBlue,
+                  thumbColor: _kAppYellow,
+                  value: _ttsRate,
+                  min: 0.3,
+                  max: 0.8,
+                  divisions: 5,
+                  label: '${_ttsRate.toStringAsFixed(1)}x',
+                  onChanged: (value) async {
+                    setState(() => _ttsRate = value);
+                    final ttsService = context.read<TtsService>();
+                    try {
+                      await ttsService.setRate(value);
+                    } catch (error) {
+                      _showError('Could not change speech rate: $error');
+                    }
+                  },
+                ),
+              ],
             ),
           ),
           _SettingsTile(
@@ -424,41 +514,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'speech',
               _ => 'Use online when configured, then try the device voice',
             },
-            trailing: DropdownButton<String>(
-              value: _ttsSource,
-              items: [
-                const DropdownMenuItem(
-                  value: 'automatic',
-                  child: Text('Automatic'),
-                ),
-                const DropdownMenuItem(value: 'online', child: Text('Online')),
-                const DropdownMenuItem(
-                  value: 'offline',
-                  child: Text('Offline'),
-                ),
-                if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+            bottom: _buildDropdownContainer(
+              isDark: isDark,
+              child: DropdownButton<String>(
+                isExpanded: true,
+                value: _ttsSource,
+                items: [
                   const DropdownMenuItem(
-                    value: 'offline_english',
-                    child: Text('English female'),
+                    value: 'automatic',
+                    child: Text('Automatic'),
                   ),
-              ],
-              onChanged: (value) async {
-                if (value == null) return;
-                if (value == 'offline_english' &&
-                    _ttsLanguage.toLowerCase() != 'en-us') {
-                  _showError(
-                    'Select English (US) before choosing the offline English voice.',
-                  );
-                  return;
-                }
-                try {
-                  await _settingsService.setTtsSource(value);
-                  if (mounted) setState(() => _ttsSource = value);
-                } catch (error) {
-                  _showError('Could not change voice source: $error');
-                }
-              },
-              underline: const SizedBox(),
+                  const DropdownMenuItem(value: 'online', child: Text('Online')),
+                  const DropdownMenuItem(
+                    value: 'offline',
+                    child: Text('Offline'),
+                  ),
+                  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                    const DropdownMenuItem(
+                      value: 'offline_english',
+                      child: Text('English female'),
+                    ),
+                ],
+                onChanged: (value) async {
+                  if (value == null) return;
+                  if (value == 'offline_english' &&
+                      _ttsLanguage.toLowerCase() != 'en-us') {
+                    _showError(
+                      'Select English (US) before choosing the offline English voice.',
+                    );
+                    return;
+                  }
+                  try {
+                    await _settingsService.setTtsSource(value);
+                    if (mounted) setState(() => _ttsSource = value);
+                  } catch (error) {
+                    _showError('Could not change voice source: $error');
+                  }
+                },
+              ),
             ),
           ),
           if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
@@ -468,64 +561,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: _offlineEnglishVoiceInstalled
                   ? 'Ready offline. Select English (US) to use it.'
                   : '147 MB download; keep about 350 MB free. English only.',
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 125,
-                    child: DropdownButton<String>(
-                      isExpanded: true,
-                      value: _ttsOfflineEnglishVoice,
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'af_maple',
-                          child: Text('Maple · Female'),
+              trailing: _offlineEnglishVoiceInstalled
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        'Installed',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
                         ),
-                        DropdownMenuItem(
-                          value: 'af_sol',
-                          child: Text('Sol · Female'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'bf_vale',
-                          child: Text('Vale · Female · UK'),
-                        ),
-                      ],
-                      onChanged: (voice) async {
-                        if (voice == null) return;
-                        try {
-                          await _settingsService.setTtsOfflineEnglishVoice(
-                            voice,
-                          );
-                          if (mounted) {
-                            setState(() => _ttsOfflineEnglishVoice = voice);
-                          }
-                        } catch (error) {
-                          _showError('Could not change English voice: $error');
-                        }
-                      },
-                      underline: const SizedBox(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (_isInstallingOfflineEnglishVoice)
-                    SizedBox(
-                      width: 72,
-                      child: LinearProgressIndicator(
-                        value: _offlineVoiceDownloadProgress,
                       ),
                     )
-                  else
-                    TextButton(
-                      onPressed: _offlineEnglishVoiceInstalled
-                          ? null
-                          : _installOfflineEnglishVoice,
-                      child: Text(
-                        _offlineEnglishVoiceInstalled
-                            ? 'Installed'
-                            : 'Download',
+                  : null,
+              bottom: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+                    width: 1.1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          isExpanded: true,
+                          value: _ttsOfflineEnglishVoice,
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'af_maple',
+                              child: Text('Maple · Female'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'af_sol',
+                              child: Text('Sol · Female'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'bf_vale',
+                              child: Text('Vale · Female · UK'),
+                            ),
+                          ],
+                          onChanged: (voice) async {
+                            if (voice == null) return;
+                            try {
+                              await _settingsService.setTtsOfflineEnglishVoice(
+                                voice,
+                              );
+                              if (mounted) {
+                                setState(() => _ttsOfflineEnglishVoice = voice);
+                              }
+                            } catch (error) {
+                              _showError('Could not change English voice: $error');
+                            }
+                          },
+                        ),
                       ),
                     ),
-                ],
+                    const SizedBox(width: 8),
+                    if (_isInstallingOfflineEnglishVoice)
+                      SizedBox(
+                        width: 72,
+                        child: LinearProgressIndicator(
+                          value: _offlineVoiceDownloadProgress,
+                        ),
+                      )
+                    else
+                      FilledButton.tonal(
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          minimumSize: const Size(0, 32),
+                        ),
+                        onPressed: _offlineEnglishVoiceInstalled
+                            ? null
+                            : _installOfflineEnglishVoice,
+                        child: Text(
+                          _offlineEnglishVoiceInstalled
+                              ? 'Installed'
+                              : 'Download',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           if (_ttsServerUrl.isNotEmpty)
@@ -543,28 +668,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: Icons.spatial_audio_off_outlined,
               title: 'Online Filipino voice',
               subtitle: 'Female and male neural voices',
-              trailing: DropdownButton<String>(
-                value: _ttsOnlineVoice,
-                items: const [
-                  DropdownMenuItem(
-                    value: 'fil-PH-BlessicaNeural',
-                    child: Text('Blessica · Female'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'fil-PH-AngeloNeural',
-                    child: Text('Angelo · Male'),
-                  ),
-                ],
-                onChanged: (value) async {
-                  if (value == null) return;
-                  try {
-                    await _settingsService.setTtsOnlineVoice(value);
-                    if (mounted) setState(() => _ttsOnlineVoice = value);
-                  } catch (error) {
-                    _showError('Could not change online voice: $error');
-                  }
-                },
-                underline: const SizedBox(),
+              bottom: _buildDropdownContainer(
+                isDark: isDark,
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: _ttsOnlineVoice,
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'fil-PH-BlessicaNeural',
+                      child: Text('Blessica · Female'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'fil-PH-AngeloNeural',
+                      child: Text('Angelo · Male'),
+                    ),
+                  ],
+                  onChanged: (value) async {
+                    if (value == null) return;
+                    try {
+                      await _settingsService.setTtsOnlineVoice(value);
+                      if (mounted) setState(() => _ttsOnlineVoice = value);
+                    } catch (error) {
+                      _showError('Could not change online voice: $error');
+                    }
+                  },
+                ),
               ),
             ),
           if (_ttsLanguage.toLowerCase().startsWith('fil') &&
@@ -576,17 +704,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: hasLanguageVoice
                   ? 'Device Filipino voice is available'
                   : 'Download Filipino speech data from Android',
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
+              trailing: hasLanguageVoice
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        'Available',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
+                    )
+                  : null,
+              bottom: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  IconButton(
-                    tooltip: 'Refresh device voices',
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Refresh', style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      minimumSize: const Size(0, 32),
+                    ),
                     onPressed: _loadSettings,
-                    icon: const Icon(Icons.refresh),
                   ),
-                  TextButton(
+                  const SizedBox(width: 8),
+                  FilledButton.tonal(
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      minimumSize: const Size(0, 32),
+                    ),
                     onPressed: _installOfflineVoice,
-                    child: const Text('Install'),
+                    child: const Text(
+                      'Install Voice Data',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ],
               ),
@@ -629,45 +786,123 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // 4. Accessibility & Display
           const _SectionHeader('Accessibility & Display', icon: Icons.palette_outlined),
-          _SettingsTile(
-            icon: Icons.format_size_outlined,
-            title: 'Text Size',
-            subtitle: 'Adjust text scaling for readability',
-            trailing: SizedBox(
-              width: 140,
-              child: Slider(
-                value: _textScale,
-                min: 0.8,
-                max: 1.4,
-                divisions: 6,
-                label: '${(_textScale * 100).toInt()}%',
-                onChanged: (value) async {
-                  setState(() => _textScale = value);
-                  await _settingsService.setTextScaleFactor(value);
-                },
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF141F36) : Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: isDark ? const Color(0xFF223253) : const Color(0xFFE2E8F0),
+                width: 1.2,
               ),
+              boxShadow: [
+                BoxShadow(
+                  color: isDark ? Colors.black.withValues(alpha: 0.15) : _kAppBlue.withValues(alpha: 0.03),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: (isDark ? const Color(0xFF93C5FD) : _kAppBlue).withValues(
+                          alpha: isDark ? 0.20 : 0.08,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.format_size_outlined,
+                        size: 20,
+                        color: isDark ? const Color(0xFF93C5FD) : _kAppBlue,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Text Size',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                              color: isDark ? Colors.white : const Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Adjust text scaling for readability',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _kAppBlue.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${(_textScale * 100).toInt()}%',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: _kAppBlue,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Slider(
+                  activeColor: _kAppBlue,
+                  thumbColor: _kAppYellow,
+                  value: _textScale,
+                  min: 0.8,
+                  max: 1.4,
+                  divisions: 6,
+                  label: '${(_textScale * 100).toInt()}%',
+                  onChanged: (value) async {
+                    setState(() => _textScale = value);
+                    await _settingsService.setTextScaleFactor(value);
+                  },
+                ),
+              ],
             ),
           ),
           _SettingsTile(
             icon: Icons.dark_mode_outlined,
             title: 'Theme Mode',
             subtitle: 'Choose light, dark, or system theme',
-            trailing: DropdownButton<ThemeMode>(
-              value: themeProvider.themeMode,
-              items: const [
-                DropdownMenuItem(
-                  value: ThemeMode.system,
-                  child: Text('System'),
-                ),
-                DropdownMenuItem(value: ThemeMode.light, child: Text('Light')),
-                DropdownMenuItem(value: ThemeMode.dark, child: Text('Dark')),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  themeProvider.setThemeMode(value);
-                }
-              },
-              underline: const SizedBox(),
+            trailing: DropdownButtonHideUnderline(
+              child: DropdownButton<ThemeMode>(
+                value: themeProvider.themeMode,
+                items: const [
+                  DropdownMenuItem(
+                    value: ThemeMode.system,
+                    child: Text('System'),
+                  ),
+                  DropdownMenuItem(value: ThemeMode.light, child: Text('Light')),
+                  DropdownMenuItem(value: ThemeMode.dark, child: Text('Dark')),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    themeProvider.setThemeMode(value);
+                  }
+                },
+              ),
             ),
           ),
           _SettingsTile(
@@ -731,7 +966,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _SettingsTile(
             icon: Icons.info_outline_rounded,
             title: 'Version',
-            subtitle: '1.1.0',
+            subtitle: '1.2.0',
             onTap: () => _showAboutDialog('Version'),
           ),
           _SettingsTile(
@@ -1083,12 +1318,31 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+Widget _buildDropdownContainer({
+  required bool isDark,
+  required Widget child,
+}) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+    decoration: BoxDecoration(
+      color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+        width: 1.1,
+      ),
+    ),
+    child: DropdownButtonHideUnderline(child: child),
+  );
+}
+
 class _SettingsTile extends StatelessWidget {
   final IconData? icon;
   final Color? iconColor;
   final String title;
   final String? subtitle;
   final Widget? trailing;
+  final Widget? bottom;
   final VoidCallback? onTap;
 
   const _SettingsTile({
@@ -1097,6 +1351,7 @@ class _SettingsTile extends StatelessWidget {
     required this.title,
     this.subtitle,
     this.trailing,
+    this.bottom,
     this.onTap,
   });
 
@@ -1126,45 +1381,77 @@ class _SettingsTile extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(18),
-        child: ListTile(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          leading: icon != null
-              ? Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: effectiveIconColor.withValues(
-                      alpha: isDark ? 0.20 : 0.08,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    if (icon != null) ...[
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: effectiveIconColor.withValues(
+                            alpha: isDark ? 0.20 : 0.08,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          icon,
+                          size: 20,
+                          color: effectiveIconColor,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                    ],
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: isDark ? Colors.white : const Color(0xFF0F172A),
+                        ),
+                      ),
                     ),
-                    borderRadius: BorderRadius.circular(12),
+                    if (trailing != null) ...[
+                      const SizedBox(width: 8),
+                      trailing!,
+                    ],
+                  ],
+                ),
+                if (subtitle != null) ...[
+                  Padding(
+                    padding: EdgeInsets.only(
+                      left: icon != null ? 52.0 : 0.0,
+                      top: 4.0,
+                    ),
+                    child: Text(
+                      subtitle!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark
+                            ? const Color(0xFF94A3B8)
+                            : const Color(0xFF64748B),
+                        height: 1.35,
+                      ),
+                    ),
                   ),
-                  child: Icon(
-                    icon,
-                    size: 20,
-                    color: effectiveIconColor,
-                  ),
-                )
-              : null,
-          title: Text(
-            title,
-            style: TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-              color: isDark ? Colors.white : const Color(0xFF0F172A),
+                ],
+                if (bottom != null) ...[
+                  const SizedBox(height: 10),
+                  bottom!,
+                ],
+              ],
             ),
           ),
-          subtitle: subtitle != null
-              ? Text(
-                  subtitle!,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                  ),
-                )
-              : null,
-          trailing: trailing,
-          onTap: onTap,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         ),
       ),
     );

@@ -30,10 +30,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
     super.initState();
     _loadHistory();
     _scrollController.addListener(_onScroll);
+    DatabaseHelper.instance.historyChangeNotifier.addListener(_loadHistory);
   }
 
   @override
   void dispose() {
+    DatabaseHelper.instance.historyChangeNotifier.removeListener(_loadHistory);
     _scrollController.dispose();
     super.dispose();
   }
@@ -117,6 +119,39 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
+  Future<void> _confirmClearAll() async {
+    if (_history.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear All History'),
+        content: const Text(
+          'Are you sure you want to delete all translation history? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFDC2626)),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await DatabaseHelper.instance.clearHistory();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('All translation history cleared')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -152,15 +187,20 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           ),
         ),
+        titleSpacing: 8,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Translation History',
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 19,
-                letterSpacing: -0.4,
+            const Flexible(
+              child: Text(
+                'Translation History',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  letterSpacing: -0.4,
+                ),
               ),
             ),
             const SizedBox(width: 5),
@@ -174,9 +214,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           ],
         ),
-        actions: const [
-          ConnectivityBadge(),
-          SizedBox(width: 14),
+        actions: [
+          if (_history.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.delete_sweep_rounded),
+              tooltip: 'Clear all history',
+              visualDensity: VisualDensity.compact,
+              onPressed: _confirmClearAll,
+            ),
+          const SizedBox(width: 4),
+          const ConnectivityBadge(),
+          const SizedBox(width: 10),
         ],
       ),
 

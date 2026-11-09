@@ -306,15 +306,20 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
             ),
           ),
         ),
+        titleSpacing: 8,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Speech to Text',
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 19,
-                letterSpacing: -0.4,
+            const Flexible(
+              child: Text(
+                'Speech to Text',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  letterSpacing: -0.4,
+                ),
               ),
             ),
             const SizedBox(width: 5),
@@ -330,7 +335,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
         ),
         actions: const [
           ConnectivityBadge(),
-          SizedBox(width: 14),
+          SizedBox(width: 10),
         ],
       ),
 

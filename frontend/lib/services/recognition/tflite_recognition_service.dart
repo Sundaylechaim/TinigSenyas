@@ -39,6 +39,16 @@ class TfliteRecognitionService implements RecognitionService {
   Offset? _lastWrist;
   final List<double> _motionHistory = [];
 
+  // Exponential Moving Average (EMA) landmark smoothing
+  List<(double, double, double)>? _smoothedPrimaryHand;
+  List<(double, double, double)>? _smoothedSecondaryHand;
+  static const double _handSmoothAlpha = 0.80;
+
+  // Rolling Softmax Probability Distribution Smoothing
+  final List<List<double>> _fslProbHistory = [];
+  final List<List<double>> _medProbHistory = [];
+  static const int _probHistorySize = 5;
+
   bool _isInitialized = false;
   bool _isRunning = false;
   bool _isPaused = false;
@@ -81,6 +91,10 @@ class TfliteRecognitionService implements RecognitionService {
     _pauseStatusController.add(value);
     if (value) {
       _sequenceBuffer.clear();
+      _fslProbHistory.clear();
+      _medProbHistory.clear();
+      _smoothedPrimaryHand = null;
+      _smoothedSecondaryHand = null;
       _alphaCandidate = null;
       _alphaCandidateCount = 0;
       _fslCandidate = null;
@@ -295,6 +309,31 @@ class TfliteRecognitionService implements RecognitionService {
     return (nx.clamp(0.0, 1.0), ny.clamp(0.0, 1.0), lm.z);
   }
 
+  /// Applies exponential moving average (EMA) smoothing across consecutive video frames
+  List<(double, double, double)> _applyEmaSmoothing(
+    List<(double, double, double)> current,
+    List<(double, double, double)>? previous,
+  ) {
+    if (previous == null || previous.length != current.length) {
+      return List<(double, double, double)>.from(current);
+    }
+    final result = <(double, double, double)>[];
+    for (int i = 0; i < current.length; i++) {
+      final cx = current[i].$1;
+      final cy = current[i].$2;
+      final cz = current[i].$3;
+      final px = previous[i].$1;
+      final py = previous[i].$2;
+      final pz = previous[i].$3;
+      result.add((
+        _handSmoothAlpha * cx + (1.0 - _handSmoothAlpha) * px,
+        _handSmoothAlpha * cy + (1.0 - _handSmoothAlpha) * py,
+        _handSmoothAlpha * cz + (1.0 - _handSmoothAlpha) * pz,
+      ));
+    }
+    return result;
+  }
+
   void _handleDetectedHands(List<Hand> hands) {
     if (!_isRunning) return;
 
@@ -302,6 +341,10 @@ class TfliteRecognitionService implements RecognitionService {
       _landmarkStreamController.add([]);
       _alphaCandidateCount = 0;
       _alphaCandidate = null;
+      _smoothedPrimaryHand = null;
+      _smoothedSecondaryHand = null;
+      _fslProbHistory.clear();
+      _medProbHistory.clear();
       if (_sequenceBuffer.isNotEmpty && _sequenceBuffer.length > 10) {
         _sequenceBuffer.removeAt(0);
       }
@@ -332,6 +375,19 @@ class TfliteRecognitionService implements RecognitionService {
     final primaryHand = transformedHands.first;
     if (primaryHand.length < 21) return;
 
+    // Apply EMA smoothing to eliminate camera frame micro-jitter
+    final smoothedPrimary = _applyEmaSmoothing(primaryHand, _smoothedPrimaryHand);
+    _smoothedPrimaryHand = smoothedPrimary;
+    final List<(double, double, double)>? smoothedSecondary;
+    if (transformedHands.length > 1 && transformedHands[1].length >= 21) {
+      smoothedSecondary = _applyEmaSmoothing(transformedHands[1], _smoothedSecondaryHand);
+      _smoothedSecondaryHand = smoothedSecondary;
+    } else {
+      _smoothedSecondaryHand = null;
+      smoothedSecondary = null;
+    }
+    final smoothedHands = [smoothedPrimary, ?smoothedSecondary];
+
     // 3. Natural Rest Zone Check:
     // Check if hands have dropped below active signing zone (wrist y >= 0.82)
     final bool allHandsRestingLow = transformedHands.every((hand) {
@@ -348,6 +404,10 @@ class TfliteRecognitionService implements RecognitionService {
           _pauseStatusController.add(true);
         }
         _sequenceBuffer.clear();
+        _fslProbHistory.clear();
+        _medProbHistory.clear();
+        _smoothedPrimaryHand = null;
+        _smoothedSecondaryHand = null;
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
         _fslCandidate = null;
@@ -368,7 +428,7 @@ class TfliteRecognitionService implements RecognitionService {
     }
 
     // 4. Compute Kinetic Hand Motion
-    final wrist = primaryHand[0];
+    final wrist = smoothedPrimary[0];
     double currentMotion = 0.0;
     if (_lastWrist != null) {
       final dx = wrist.$1 - _lastWrist!.dx;
@@ -381,12 +441,15 @@ class TfliteRecognitionService implements RecognitionService {
     final avgMotion = _motionHistory.reduce((a, b) => a + b) / _motionHistory.length;
     final isHandMoving = avgMotion >= 0.012;
 
-    // 5. Dynamic Letter 'J' Kinematic Detector:
+    // 5. Accumulate continuous ST-GCN sequence frame buffer
+    _accumulateSequenceFrame(smoothedHands);
+
+    // 6. Dynamic Letter 'J' Kinematic Detector:
     // In FSL, 'J' is traced dynamically in the air using an 'I' handshape (downward stroke + upward hook).
     if (_jCooldown > 0) _jCooldown--;
-    if (!_isPaused && transformedHands.length == 1 && _mode != RecognitionMode.phrases) {
-      final isI = _checkIsIHandshape(primaryHand);
-      final pinkyTip = primaryHand[20];
+    if (!_isPaused && smoothedHands.length == 1 && _mode != RecognitionMode.phrases && _mode != RecognitionMode.medical) {
+      final isI = _checkIsIHandshape(smoothedPrimary);
+      final pinkyTip = smoothedPrimary[20];
       _jTrajectory.add((pinkyTip.$1, pinkyTip.$2, isI));
       if (_jTrajectory.length > 30) _jTrajectory.removeAt(0);
 
@@ -413,23 +476,31 @@ class TfliteRecognitionService implements RecognitionService {
       _jTrajectory.clear();
     }
 
-    // 6. Intelligent Mode & Motion-Aware Routing:
+    // 7. Intelligent Mode & Motion-Aware Routing:
     if (_mode == RecognitionMode.alphabet) {
-      _evaluateAlphabet(primaryHand);
+      _evaluateAlphabet(smoothedPrimary);
     } else if (_mode == RecognitionMode.phrases) {
-      _evaluateConversationalSign(transformedHands);
+      _evaluateConversationalSign(avgMotion);
     } else if (_mode == RecognitionMode.medical) {
-      _evaluateMedicalSign(transformedHands);
+      _evaluateMedicalSign(avgMotion);
     } else {
       // Auto Mode:
-      if (isHandMoving) {
-        // Waving or dynamic gesture: clear static alphabet candidate and route to ST-GCN!
+      // FSL Alphabet fingerspelling is strictly 1-handed.
+      // If 2 hands are raised in active signing space, route to ST-GCN phrases.
+      if (smoothedHands.length >= 2) {
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
-        _evaluateConversationalSign(transformedHands);
+        _evaluateConversationalSign(avgMotion);
+      } else if (isHandMoving) {
+        // Dynamic single-hand movement: route to ST-GCN conversational phrases
+        _alphaCandidate = null;
+        _alphaCandidateCount = 0;
+        _evaluateConversationalSign(avgMotion);
       } else {
-        // Hand held steady: route to Alphabet Fingerspelling (A-Z)
-        _evaluateAlphabet(primaryHand);
+        // Hand held steady: evaluate Alphabet Fingerspelling (A-Z)
+        _fslCandidate = null;
+        _fslCandidateCount = 0;
+        _evaluateAlphabet(smoothedPrimary);
       }
     }
   }
@@ -530,11 +601,21 @@ class TfliteRecognitionService implements RecognitionService {
     // Active signing space check: skip if hand is resting at the very bottom
     if (wrist.$2 > 0.92) return;
 
+    // Canonical Right-Hand Alignment:
+    // In fsl_alphabet.tflite training data (canonical right hand palm facing camera):
+    // Index MCP (joint 5) has a greater x-coordinate than Pinky MCP (joint 17): dx_5 > dx_17.
+    // Thumb (joint 4) extends toward positive dx.
+    // In front camera selfie view (horizontally mirrored preview) or with a left hand:
+    // Index MCP is to the left of Pinky MCP (lms[5].$1 < lms[17].$1).
+    // We detect this and mirror dx across 0 to guarantee canonical right-hand alignment!
+    final bool isMirrored = lms.length >= 18 && lms[5].$1 < lms[17].$1;
+
     final centered = <List<double>>[];
     double maxDist = 1e-4;
 
     for (final pt in lms) {
-      final dx = pt.$1 - wrist.$1;
+      final rawDx = pt.$1 - wrist.$1;
+      final dx = isMirrored ? -rawDx : rawDx;
       final dy = pt.$2 - wrist.$2;
       final dz = pt.$3 - wrist.$3;
       final dist = math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -570,9 +651,9 @@ class TfliteRecognitionService implements RecognitionService {
         }
       }
 
-      // Calibrated gating: confidence >= 0.50 and margin >= 0.05
+      // Calibrated gating: confidence >= 0.42 and margin >= 0.03
       final margin = top1Prob - top2Prob;
-      if (top1Prob >= 0.50 && margin >= 0.04 && top1Idx < _alphabetLabels.length) {
+      if (top1Prob >= 0.42 && margin >= 0.03 && top1Idx < _alphabetLabels.length) {
         final letter = _alphabetLabels[top1Idx];
         if (letter == _alphaCandidate) {
           _alphaCandidateCount++;
@@ -609,52 +690,123 @@ class TfliteRecognitionService implements RecognitionService {
     }
   }
 
-  /// Assembles 75-joint temporal frame buffer with exact shoulder-centered normalization and runs 103-class ST-GCN model
-  void _evaluateConversationalSign(List<List<(double, double, double)>> transformedHands) {
-    if (_fslModelInterpreter == null || _fslLabels.isEmpty || _isPaused) return;
+  /// Transforms screen landmarks to unmirrored world coordinates and builds canonical ST-GCN joint frame
+  void _accumulateSequenceFrame(List<List<(double, double, double)>> hands) {
+    if (hands.isEmpty) return;
 
     final currentJoints = List.generate(_totalJoints, (_) => [0.0, 0.0, 0.0]);
 
-    // Synthetic canonical pose landmarks in slots 0..32:
-    currentJoints[0] = [0.0, -0.8, 0.0];  // Head / Nose
-    currentJoints[11] = [-0.5, 0.0, 0.0]; // Left Shoulder
-    currentJoints[12] = [0.5, 0.0, 0.0];  // Right Shoulder
-
-    // Primary hand (Right hand slot 54..74):
-    // EXACT MODEL NORMALIZATION FROM TRAINING: (pt - [0.5, 0.5, 0.0]) / 0.20
-    final rightHand = transformedHands.first;
-    for (int i = 0; i < 21 && i < rightHand.length; i++) {
-      final nx = (rightHand[i].$1 - 0.5) / 0.20;
-      final ny = (rightHand[i].$2 - 0.5) / 0.20;
-      final nz = rightHand[i].$3 / 0.20;
-      currentJoints[54 + i] = [nx, ny, nz];
+    // Unmirror X for front camera to match the world space of the training dataset
+    (double, double, double) toWorld((double, double, double) pt) {
+      final wx = _isFrontCamera ? (1.0 - pt.$1) : pt.$1;
+      return (wx, pt.$2, pt.$3);
     }
 
-    // Secondary hand (Left hand slot 33..53) if present:
-    if (transformedHands.length > 1) {
-      final leftHand = transformedHands[1];
+    // Normalizes point relative to mid-shoulder (0.50, 0.65) and shoulder width (0.22)
+    List<double> normJoint((double, double, double) pt) {
+      return [
+        (pt.$1 - 0.50) / 0.22,
+        (pt.$2 - 0.65) / 0.22,
+        pt.$3 / 0.22,
+      ];
+    }
+
+    final worldHands = hands.map((h) => h.map(toWorld).toList()).toList();
+
+    List<(double, double, double)> rightHand;
+    List<(double, double, double)>? leftHand;
+
+    if (worldHands.length >= 2) {
+      final hand0 = worldHands[0];
+      final hand1 = worldHands[1];
+      final meanX0 = hand0.map((p) => p.$1).reduce((a, b) => a + b) / hand0.length;
+      final meanX1 = hand1.map((p) => p.$1).reduce((a, b) => a + b) / hand1.length;
+
+      // In unmirrored world space, signer's right is on image left (lower x), left is on image right (higher x)
+      if (meanX0 < meanX1) {
+        rightHand = hand0;
+        leftHand = hand1;
+      } else {
+        rightHand = hand1;
+        leftHand = hand0;
+      }
+    } else {
+      rightHand = worldHands[0];
+      leftHand = null;
+    }
+
+    // Assign Right Hand joints to slot 54..74
+    for (int i = 0; i < 21 && i < rightHand.length; i++) {
+      currentJoints[54 + i] = normJoint(rightHand[i]);
+    }
+
+    // Assign Left Hand joints to slot 33..53 if present
+    if (leftHand != null) {
       for (int i = 0; i < 21 && i < leftHand.length; i++) {
-        final nx = (leftHand[i].$1 - 0.5) / 0.20;
-        final ny = (leftHand[i].$2 - 0.5) / 0.20;
-        final nz = leftHand[i].$3 / 0.20;
-        currentJoints[33 + i] = [nx, ny, nz];
+        currentJoints[33 + i] = normJoint(leftHand[i]);
       }
     }
+
+    // Synthetic canonical pose landmarks in slots 0..32 matching ST-GCN graph topology:
+    currentJoints[0] = [0.0, -0.95, -0.1];  // Head / Nose
+    currentJoints[11] = [0.50, 0.0, 0.0];   // Left Shoulder
+    currentJoints[12] = [-0.50, 0.0, 0.0];  // Right Shoulder
+    currentJoints[23] = [0.40, 1.8, 0.0];   // Left Hip
+    currentJoints[24] = [-0.40, 1.8, 0.0];  // Right Hip
+
+    // Connect Right arm chain (Right shoulder 12 -> Right elbow 14 -> Right wrist 16 -> Right hand 54)
+    currentJoints[16] = List<double>.from(currentJoints[54]);
+    currentJoints[14] = [
+      (currentJoints[12][0] + currentJoints[16][0]) / 2.0,
+      (currentJoints[12][1] + currentJoints[16][1]) / 2.0,
+      (currentJoints[12][2] + currentJoints[16][2]) / 2.0,
+    ];
+
+    // Connect Left arm chain (Left shoulder 11 -> Left elbow 13 -> Left wrist 15 -> Left hand 33)
+    if (leftHand != null) {
+      currentJoints[15] = List<double>.from(currentJoints[33]);
+    } else {
+      // Resting position when left hand is idle during single-handed sign
+      currentJoints[15] = [0.55, 0.90, 0.0];
+    }
+    currentJoints[13] = [
+      (currentJoints[11][0] + currentJoints[15][0]) / 2.0,
+      (currentJoints[11][1] + currentJoints[15][1]) / 2.0,
+      (currentJoints[11][2] + currentJoints[15][2]) / 2.0,
+    ];
 
     _sequenceBuffer.add(currentJoints);
     if (_sequenceBuffer.length > _targetSequenceLength) {
       _sequenceBuffer.removeAt(0);
     }
+  }
 
-    // Evaluate once sequence window has sufficient motion history (>= 20 frames)
-    if (_sequenceBuffer.length >= 20) {
+  /// Runs 103-class ST-GCN conversational model on continuous sequence buffer
+  void _evaluateConversationalSign(double avgMotion) {
+    if (_fslModelInterpreter == null || _fslLabels.isEmpty || _isPaused) return;
+
+    // Require at least 24 frames of continuous gesture buffer (~0.8s) and active kinetic movement
+    if (_sequenceBuffer.length >= 24 && avgMotion >= 0.005) {
       try {
         final seqInput = _resampleSequence(_sequenceBuffer, _targetSequenceLength);
         final input = [seqInput];
         final output = [List<double>.filled(_fslLabels.length, 0.0)];
 
         _fslModelInterpreter!.run(input, output);
-        final probs = output[0];
+        final rawProbs = output[0];
+
+        // Rolling probability distribution smoothing (eliminates single-frame noise)
+        _fslProbHistory.add(rawProbs);
+        if (_fslProbHistory.length > _probHistorySize) {
+          _fslProbHistory.removeAt(0);
+        }
+
+        final probs = List<double>.filled(_fslLabels.length, 0.0);
+        for (final p in _fslProbHistory) {
+          for (int i = 0; i < p.length; i++) {
+            probs[i] += p[i] / _fslProbHistory.length;
+          }
+        }
 
         int top1Idx = 0;
         double top1Prob = probs[0];
@@ -671,7 +823,7 @@ class TfliteRecognitionService implements RecognitionService {
         }
 
         final margin = top1Prob - top2Prob;
-        if (top1Prob >= 0.45 && margin >= 0.05 && top1Idx < _fslLabels.length) {
+        if ((top1Prob >= 0.55 || (top1Prob >= 0.44 && margin >= 0.05)) && top1Idx < _fslLabels.length) {
           final rawWord = _fslLabels[top1Idx];
           final displayWord = _formatFslPhrase(rawWord);
 
@@ -682,11 +834,12 @@ class TfliteRecognitionService implements RecognitionService {
             _fslCandidateCount = 1;
           }
 
+          // Require 2 consecutive evaluations for responsive and stable recognition
           if (_fslCandidateCount >= 2) {
             final now = DateTime.now();
             final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
             final isSameWord = (displayWord == _lastEmittedLabel);
-            final requiredDelay = isSameWord ? 2000 : 900;
+            final requiredDelay = isSameWord ? 2200 : 900;
 
             if (elapsed > requiredDelay) {
               _lastEmittedLabel = displayWord;
@@ -749,49 +902,30 @@ class TfliteRecognitionService implements RecognitionService {
   }
 
   /// Evaluates 60-frame ST-GCN sequence using dedicated 25-class Medical FSL model
-  void _evaluateMedicalSign(List<List<(double, double, double)>> transformedHands) {
+  void _evaluateMedicalSign(double avgMotion) {
     if (_medicalModelInterpreter == null || _medicalLabels.isEmpty || _isPaused) return;
 
-    final currentJoints = List.generate(_totalJoints, (_) => [0.0, 0.0, 0.0]);
-
-    // Synthetic canonical pose landmarks in slots 0..32:
-    currentJoints[0] = [0.0, -0.8, 0.0];  // Head / Nose
-    currentJoints[11] = [-0.5, 0.0, 0.0]; // Left Shoulder
-    currentJoints[12] = [0.5, 0.0, 0.0];  // Right Shoulder
-
-    // Primary hand (Right hand slot 54..74):
-    final rightHand = transformedHands.first;
-    for (int i = 0; i < 21 && i < rightHand.length; i++) {
-      final nx = (rightHand[i].$1 - 0.5) / 0.20;
-      final ny = (rightHand[i].$2 - 0.5) / 0.20;
-      final nz = rightHand[i].$3 / 0.20;
-      currentJoints[54 + i] = [nx, ny, nz];
-    }
-
-    // Secondary hand (Left hand slot 33..53) if present:
-    if (transformedHands.length > 1) {
-      final leftHand = transformedHands[1];
-      for (int i = 0; i < 21 && i < leftHand.length; i++) {
-        final nx = (leftHand[i].$1 - 0.5) / 0.20;
-        final ny = (leftHand[i].$2 - 0.5) / 0.20;
-        final nz = leftHand[i].$3 / 0.20;
-        currentJoints[33 + i] = [nx, ny, nz];
-      }
-    }
-
-    _sequenceBuffer.add(currentJoints);
-    if (_sequenceBuffer.length > _targetSequenceLength) {
-      _sequenceBuffer.removeAt(0);
-    }
-
-    if (_sequenceBuffer.length >= 20) {
+    if (_sequenceBuffer.length >= 24 && avgMotion >= 0.005) {
       try {
         final seqInput = _resampleSequence(_sequenceBuffer, _targetSequenceLength);
         final input = [seqInput];
         final output = [List<double>.filled(_medicalLabels.length, 0.0)];
 
         _medicalModelInterpreter!.run(input, output);
-        final probs = output[0];
+        final rawProbs = output[0];
+
+        // Rolling probability distribution smoothing
+        _medProbHistory.add(rawProbs);
+        if (_medProbHistory.length > _probHistorySize) {
+          _medProbHistory.removeAt(0);
+        }
+
+        final probs = List<double>.filled(_medicalLabels.length, 0.0);
+        for (final p in _medProbHistory) {
+          for (int i = 0; i < p.length; i++) {
+            probs[i] += p[i] / _medProbHistory.length;
+          }
+        }
 
         int top1Idx = 0;
         double top1Prob = probs[0];
@@ -808,7 +942,7 @@ class TfliteRecognitionService implements RecognitionService {
         }
 
         final margin = top1Prob - top2Prob;
-        if (top1Prob >= 0.45 && margin >= 0.04 && top1Idx < _medicalLabels.length) {
+        if ((top1Prob >= 0.55 || (top1Prob >= 0.44 && margin >= 0.05)) && top1Idx < _medicalLabels.length) {
           final rawWord = _medicalLabels[top1Idx];
           final displayWord = _formatMedicalPhrase(rawWord);
 
@@ -823,7 +957,7 @@ class TfliteRecognitionService implements RecognitionService {
             final now = DateTime.now();
             final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
             final isSameWord = (displayWord == _lastEmittedLabel);
-            final requiredDelay = isSameWord ? 2000 : 900;
+            final requiredDelay = isSameWord ? 2200 : 900;
 
             if (elapsed > requiredDelay) {
               _lastEmittedLabel = displayWord;
@@ -889,14 +1023,32 @@ class TfliteRecognitionService implements RecognitionService {
     }
   }
 
-  /// Linearly resamples buffer to exact 60-frame ST-GCN tensor input
-  List<List<List<double>>> _resampleSequence(List<List<List<double>>> buffer, int targetLength) {
-    if (buffer.length == targetLength) return buffer;
+  /// Linearly resamples buffer to exact 60-frame ST-GCN tensor input with true linear interpolation
+  List<List<List<double>>> _resampleSequence(List<List<List<double>>> sequence, int targetLength) {
+    final n = sequence.length;
+    if (n == targetLength) return sequence;
+    if (n <= 1) {
+      return List.generate(
+        targetLength,
+        (_) => sequence.isEmpty ? List.generate(_totalJoints, (_) => [0.0, 0.0, 0.0]) : sequence.first,
+      );
+    }
     final resampled = <List<List<double>>>[];
-    final step = (buffer.length - 1) / (targetLength - 1);
     for (int i = 0; i < targetLength; i++) {
-      final index = (i * step).round().clamp(0, buffer.length - 1);
-      resampled.add(buffer[index]);
+      final pos = i * (n - 1) / (targetLength - 1);
+      final lower = pos.floor();
+      final upper = pos.ceil();
+      final alpha = pos - lower;
+      final frame = List.generate(_totalJoints, (j) {
+        final p0 = sequence[lower][j];
+        final p1 = sequence[upper][j];
+        return [
+          (1.0 - alpha) * p0[0] + alpha * p1[0],
+          (1.0 - alpha) * p0[1] + alpha * p1[1],
+          (1.0 - alpha) * p0[2] + alpha * p1[2],
+        ];
+      });
+      resampled.add(frame);
     }
     return resampled;
   }

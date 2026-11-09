@@ -129,7 +129,7 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'App Version: 1.1.0 (Model: ${info.currentVersion})',
+            'App Version: 1.2.0 (Model: ${info.currentVersion})',
             style: const TextStyle(fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 12),

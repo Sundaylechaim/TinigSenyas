@@ -126,29 +126,50 @@ class CameraService {
         'The webcam is in use by another program (such as Zoom, Teams, Discord, another browser tab, or background script) or blocked by Windows settings.',
       );
     }
-    throw CameraException('Could not initialize any connected camera: $lastError');
+    if (errStr.contains('permission') || errStr.contains('CameraAccessDenied')) {
+      throw CameraPermissionDeniedException(
+        'Camera permission was denied. Please allow camera access in Settings.',
+      );
+    }
+    final sanitized = _sanitizeErrorMessage(lastError);
+    throw CameraException('Could not initialize any connected camera: $sanitized');
+  }
+
+  static String _sanitizeErrorMessage(Object? error) {
+    if (error == null) return 'Camera hardware is unavailable.';
+    final str = error.toString();
+    if (str.contains('releaseFlutterSurfaceTexture') ||
+        str.contains('flutterSurfaceProducer') ||
+        str.contains('IllegalStateException')) {
+      return 'The camera preview was busy or interrupted during setup. Please tap "Retry Camera".';
+    }
+    if (str.contains('cameraNotReadable') || str.contains('NotReadableError') || str.contains('hardware error')) {
+      return 'The camera is currently locked by another application.';
+    }
+    return str
+        .replaceAll(RegExp(r'^CameraException:\s*'), '')
+        .replaceAll(RegExp(r'^Exception:\s*'), '')
+        .split('\n')
+        .first
+        .trim();
   }
 
   Future<void> _initializeControllerWithFallback(CameraDescription camera) async {
-    await _controller?.dispose();
+    try {
+      await _controller?.dispose();
+    } catch (_) {}
     _controller = null;
 
-    // Native resolution priority: Start with medium (640x480) for web compatibility
-    final resolutions = kIsWeb
-        ? const [
-            ResolutionPreset.medium,
-            ResolutionPreset.low,
-            ResolutionPreset.high,
-          ]
-        : const [
-            ResolutionPreset.high,
-            ResolutionPreset.medium,
-            ResolutionPreset.low,
-          ];
+    // Use medium (640x480) first across all platforms: optimal for MediaPipe, fast & universally supported
+    const resolutions = [
+      ResolutionPreset.medium,
+      ResolutionPreset.low,
+      ResolutionPreset.high,
+    ];
 
     final formatGroups = kIsWeb
-        ? <ImageFormatGroup?>[null]
-        : <ImageFormatGroup?>[ImageFormatGroup.yuv420, ImageFormatGroup.nv21, null];
+        ? const <ImageFormatGroup?>[null]
+        : const <ImageFormatGroup?>[ImageFormatGroup.yuv420, null];
 
     Object? lastError;
 
@@ -169,13 +190,18 @@ class CameraService {
           return;
         } catch (e) {
           lastError = e;
-          await controller?.dispose();
-          debugPrint('Camera init fallback (Camera: ${camera.name}, Resolution: $resolution): $e');
+          debugPrint('Camera init fallback (Camera: ${camera.name}, Resolution: $resolution, Format: $format): $e');
+          try {
+            await controller?.dispose();
+          } catch (_) {}
+          // Short pause between native surface attempts to let CameraX cleanly release
+          await Future.delayed(const Duration(milliseconds: 100));
         }
       }
     }
 
-    throw CameraException('Could not initialize camera "${camera.name}": $lastError');
+    final sanitized = _sanitizeErrorMessage(lastError);
+    throw CameraException('Could not initialize camera "${camera.name}": $sanitized');
   }
 
   void _startFrameStream() {
@@ -244,7 +270,9 @@ class CameraService {
     } catch (_) {}
 
     _frameController?.close();
-    _controller?.dispose();
+    try {
+      _controller?.dispose();
+    } catch (_) {}
     _controller = null;
     _frameController = null;
     _isSwitching = false;

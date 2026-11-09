@@ -138,25 +138,31 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                   fit: BoxFit.contain,
                 ),
               ),
+        titleSpacing: 8,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
-                  'TinigSenyas',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 20,
-                    letterSpacing: -0.5,
-                    color: _kAppBlue,
+                const Flexible(
+                  child: Text(
+                    'TinigSenyas',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 18,
+                      letterSpacing: -0.5,
+                      color: _kAppBlue,
+                    ),
                   ),
                 ),
-                const SizedBox(width: 5),
+                const SizedBox(width: 4),
                 Container(
-                  width: 7,
-                  height: 7,
+                  width: 6,
+                  height: 6,
                   decoration: const BoxDecoration(
                     color: _kAppYellow,
                     shape: BoxShape.circle,
@@ -166,8 +172,10 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
             ),
             Text(
               _isTagalog ? 'FSL Translation Bridge' : 'FSL Mobile Assistant',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: FontWeight.w600,
                 color: subtextColor,
                 letterSpacing: 0.2,
@@ -178,7 +186,7 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
         actions: [
           // Connectivity indicator
           const ConnectivityBadge(),
-          const SizedBox(width: 4),
+          const SizedBox(width: 6),
 
           // Compact Mobile Language Pill (FIL / EN)
           Container(

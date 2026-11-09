@@ -567,6 +567,10 @@ class SignClassifier:
                 lms_arr = np.asarray([[lm.x, lm.y, lm.z] for lm in hand_lms], dtype=np.float32)
                 wrist_pt = lms_arr[0].copy()
                 centered_hand = lms_arr - wrist_pt
+                # Canonical right-hand orientation alignment:
+                # In canonical right-hand training data, Index MCP (5).x > Pinky MCP (17).x
+                if len(hand_lms) >= 18 and hand_lms[5].x < hand_lms[17].x:
+                    centered_hand[:, 0] = -centered_hand[:, 0]
                 max_dist = float(np.max(np.linalg.norm(centered_hand, axis=1)))
                 self.norm_hand_63 = ((centered_hand / max_dist) if max_dist > 1e-4 else centered_hand).flatten().astype(np.float32)
 

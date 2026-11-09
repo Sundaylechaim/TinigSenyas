@@ -16,6 +16,7 @@ import '../widgets/camera_preview.dart';
 import '../widgets/signing_space_overlay.dart';
 import '../widgets/hand_landmark_overlay.dart';
 import '../widgets/connectivity_badge.dart';
+import '../widgets/fsl_guide_sheet.dart';
 import '../services/word_prediction_service.dart';
 import '../services/settings_service.dart';
 import '../services/model_updater.dart';
@@ -359,10 +360,42 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     } catch (e) {
       if (mounted) {
         setState(() {
-          _cameraError = e.toString();
+          _cameraError = _formatUserFacingCameraError(e);
         });
       }
     }
+  }
+
+  static String _formatUserFacingCameraError(Object error) {
+    final str = error.toString();
+    if (str.contains('releaseFlutterSurfaceTexture') ||
+        str.contains('flutterSurfaceProducer') ||
+        str.contains('IllegalStateException')) {
+      return 'The camera preview was interrupted during setup. Please tap "Retry Camera" below to reconnect.';
+    }
+    if (str.contains('cameraNotReadable') ||
+        str.contains('NotReadableError') ||
+        str.contains('in use') ||
+        str.contains('hardware error')) {
+      return 'The camera is currently in use by another app or blocked by system settings.';
+    }
+    if (str.contains('permission') || str.contains('CameraAccessDenied')) {
+      return 'Camera permission was denied. Please allow camera access in Settings.';
+    }
+    if (str.contains('No camera') || str.contains('no camera')) {
+      return 'No camera detected on this device. Please connect a webcam or enable camera hardware.';
+    }
+    final clean = str
+        .replaceAll(RegExp(r'^Exception:\s*'), '')
+        .replaceAll(RegExp(r'^CameraException:\s*'), '')
+        .replaceAll(RegExp(r'^PlatformException\([^,]+,\s*'), '')
+        .split('\n')
+        .first
+        .trim();
+    if (clean.length > 120 || clean.contains('Stacktrace:') || clean.contains('io.flutter')) {
+      return 'Unable to start camera preview. Tap "Retry Camera" to reconnect.';
+    }
+    return clean;
   }
 
   void _restartFrameStream() {
@@ -801,15 +834,20 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
             ),
           ),
         ),
+        titleSpacing: 8,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Sign to Text',
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 19,
-                letterSpacing: -0.4,
+            const Flexible(
+              child: Text(
+                'Sign to Text',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  letterSpacing: -0.4,
+                ),
               ),
             ),
             const SizedBox(width: 5),
@@ -831,6 +869,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                 color: _kAppBlue,
               ),
               tooltip: _useBackendFeed ? 'Switch to Browser Direct Camera' : 'Switch to Backend AI Video Stream',
+              visualDensity: VisualDensity.compact,
               onPressed: () {
                 setState(() {
                   _useBackendFeed = !_useBackendFeed;
@@ -845,13 +884,15 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
             IconButton(
               icon: const Icon(Icons.cameraswitch_rounded),
               tooltip: 'Switch between front and back camera',
+              visualDensity: VisualDensity.compact,
               onPressed: () {
                 HapticFeedback.selectionClick();
                 _showCameraPicker();
               },
             ),
+          const SizedBox(width: 4),
           const ConnectivityBadge(),
-          const SizedBox(width: 14),
+          const SizedBox(width: 10),
         ],
       ),
       body: _buildBody(),
@@ -1129,7 +1170,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                     Text(
                       isInUseIssue
                           ? 'The camera is currently locked by another application or blocked by system settings.'
-                          : (_cameraError ?? 'Unable to connect to camera.'),
+                          : (_cameraError != null
+                              ? _formatUserFacingCameraError(_cameraError!)
+                              : 'Unable to connect to camera.'),
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
                         height: 1.4,
@@ -2026,243 +2069,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   }
 
   void _showGuide() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        return DraggableScrollableSheet(
-          initialChildSize: 0.75,
-          maxChildSize: 0.95,
-          minChildSize: 0.5,
-          builder: (context, scrollController) => ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? const Color(0xFF0E1626).withValues(alpha: 0.98)
-                      : Colors.white.withValues(alpha: 0.98),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-                ),
-                child: DefaultTabController(
-                  length: 3,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Center(
-                        child: Container(
-                          width: 40,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.withValues(alpha: 0.3),
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          const Icon(Icons.menu_book_rounded, color: _kAppBlue, size: 22),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'FSL Reference & Tips',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            icon: const Icon(Icons.close_rounded),
-                            tooltip: 'Close guide',
-                            onPressed: () => Navigator.of(context).pop(),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      TabBar(
-                        indicatorColor: _kAppBlue,
-                        indicatorWeight: 3,
-                        labelColor: _kAppBlue,
-                        unselectedLabelColor: isDark ? Colors.white60 : const Color(0xFF64748B),
-                        labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-                        tabs: const [
-                          Tab(text: 'Phrases'),
-                          Tab(text: 'Alphabet A–Z'),
-                          Tab(text: 'Accuracy Tips'),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            // 1. Phrases Tab (Trained FSL Vocabulary)
-                            ListView(
-                              controller: scrollController,
-                              physics: const BouncingScrollPhysics(),
-                              children: const [
-                                _GuideItem('KAMUSTA', 'Friendly open-palm wave at cheek/shoulder level with palm facing forward'),
-                                _GuideItem('KAMUSTA KA', 'Curved hands with palms up rotate outward toward conversation partner'),
-                                _GuideItem('MABUTI', 'Fingertips of dominant flat hand touch chin and move forward and down'),
-                                _GuideItem('SALAMAT', 'Flat open hand touches chin/lips then extends gracefully toward receiver'),
-                                _GuideItem('WALANG ANUMAN', 'Open flat palm sweeps inward toward chest with a welcoming nod'),
-                                _GuideItem('MAGANDANG UMAGA', 'Sign Mabuti (chin forward) then dominant hand rises upward like rising sun'),
-                                _GuideItem('MAGANDANG HAPON', 'Sign Mabuti then dominant hand tilts downward at 45° angle over arm'),
-                                _GuideItem('MAGANDANG GABI', 'Sign Mabuti then curved hand covers non-dominant wrist like sunset'),
-                                _GuideItem('IKINAGAGALAK KITANG MAKILALA', 'Index fingers of both hands approach each other at chest level'),
-                                _GuideItem('MAGKITA TAYO BUKAS', 'V-handshape points from eyes outward, then thumb flicks forward at cheek'),
-                                _GuideItem('OO', 'Closed fist nods up and down at chest height mimicking a nodding head'),
-                                _GuideItem('HINDI', 'Index and middle finger extended together snap sharply to meet the thumb'),
-                                _GuideItem('TAMA', 'Dominant index finger edge drops firmly across top of non-dominant index finger'),
-                                _GuideItem('MALI', 'Y-handshape (thumb and pinky extended) touches the center of the chin'),
-                                _GuideItem('ALAM', 'Fingertips of flat hand tap temple/forehead once with confident nod'),
-                                _GuideItem('HINDI ALAM', 'Fingertips touch temple then twist sharply outward with head shake'),
-                                _GuideItem('NAIINTINDIHAN', 'Index finger flicks upward from thumb near temple like a light bulb'),
-                                _GuideItem('HINDI MAINTINDIHAN', 'Index flick near temple accompanied by furrowed brow and head shake'),
-                                _GuideItem('BINGI', 'Index finger touches ear then moves forward to touch near the mouth'),
-                                _GuideItem('MAHIRAP MAKARINIG', 'H-handshape taps downward once then twice indicating partial hearing'),
-                              ],
-                            ),
-                            // 2. Alphabet Tab
-                            ListView(
-                              controller: scrollController,
-                              physics: const BouncingScrollPhysics(),
-                              children: const [
-                                _GuideItem('A', 'Closed fist with thumb resting alongside index finger'),
-                                _GuideItem('B', 'Four fingers held upright together, thumb folded flat across palm'),
-                                _GuideItem('C', 'Hand curved into a "C" shape facing outward'),
-                                _GuideItem('D', 'Index finger points straight up; thumb and other 3 fingers form a circle'),
-                                _GuideItem('E', 'All four fingertips curled down resting lightly on thumb tip'),
-                                _GuideItem('F', 'Index finger and thumb touch in circle; other 3 fingers extended upward'),
-                                _GuideItem('G', 'Index finger and thumb point sideways parallel to each other'),
-                                _GuideItem('H', 'Index and middle fingers extended together pointing horizontally'),
-                                _GuideItem('I', 'Little finger (pinky) pointed straight up; all other fingers closed in fist'),
-                                _GuideItem('J', 'Little finger up, trace the curve of a "J" in the air'),
-                                _GuideItem('K', 'Index finger upright, middle tilted forward, thumb placed between them'),
-                                _GuideItem('L', 'Thumb and index finger form an "L" shape upright'),
-                                _GuideItem('M', 'Thumb tucked under three folded fingers (index, middle, ring)'),
-                                _GuideItem('N', 'Thumb tucked under two folded fingers (index and middle)'),
-                                _GuideItem('O', 'All fingertips touch thumb tip forming an "O" oval'),
-                                _GuideItem('P', 'Same as "K" handshape pointed downwards toward floor'),
-                                _GuideItem('Q', 'Same as "G" handshape pointed downwards toward floor'),
-                                _GuideItem('R', 'Middle finger crossed over index finger upright'),
-                                _GuideItem('S', 'Closed fist with thumb folded tightly across the front of fingers'),
-                                _GuideItem('T', 'Thumb inserted between index and middle finger with fist closed'),
-                                _GuideItem('U', 'Index and middle fingers held straight up touching together'),
-                                _GuideItem('V', 'Index and middle fingers upright spread apart forming a "V"'),
-                                _GuideItem('W', 'Index, middle, and ring fingers spread upright forming a "W"'),
-                                _GuideItem('X', 'Index finger crooked into a hook; other fingers closed in fist'),
-                                _GuideItem('Y', 'Thumb and pinky extended outward like a "shaka" phone sign'),
-                                _GuideItem('Z', 'Index finger points and traces a "Z" in the air'),
-                              ],
-                            ),
-                            // 3. Accuracy Tips Tab
-                            ListView(
-                              controller: scrollController,
-                              physics: const BouncingScrollPhysics(),
-                              children: const [
-                                _GuideTipCard(
-                                  icon: Icons.light_mode_rounded,
-                                  title: 'Good, Even Lighting',
-                                  description: 'Face a light source or window so your hands and face have clear contrast without heavy backlighting or shadows.',
-                                ),
-                                _GuideTipCard(
-                                  icon: Icons.straighten_rounded,
-                                  title: 'Optimal Distance (0.5m – 1.0m)',
-                                  description: 'Position your phone on a stand or desk at chest level so your head, shoulders, and both hands remain in frame.',
-                                ),
-                                _GuideTipCard(
-                                  icon: Icons.pan_tool_outlined,
-                                  title: 'Natural Rest to Pause',
-                                  description: 'Lower your hands to your lap or sides to pause recognition while thinking. Raise them back into the signing space to resume seamlessly.',
-                                ),
-                                _GuideTipCard(
-                                  icon: Icons.toggle_on_rounded,
-                                  title: 'Use Mode Switch for High Accuracy',
-                                  description: 'Tap "Mode" (top pill) to switch to "A–Z" for fingerspelling, "Phrases" for everyday signs, or "Medical" for health & clinical signs.',
-                                ),
-                                _GuideTipCard(
-                                  icon: Icons.speed_rounded,
-                                  title: 'Deliberate Pacing',
-                                  description: 'Hold each static letter for about 1 second to confirm detection before transitioning to the next letter.',
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _GuideTipCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String description;
-
-  const _GuideTipCard({
-    required this.icon,
-    required this.title,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF162138) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark ? const Color(0xFF233352) : const Color(0xFFE2E8F0),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: _kAppBlue.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: _kAppBlue, size: 22),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    height: 1.4,
-                    color: isDark ? Colors.white70 : const Color(0xFF475569),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+    showFslGuideSheet(context);
   }
 }
 
@@ -2321,60 +2128,6 @@ class _ActionButton extends StatelessWidget {
           Text(
             label,
             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _GuideItem extends StatelessWidget {
-  final String sign;
-  final String description;
-
-  const _GuideItem(this.sign, this.description);
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF162138) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isDark ? const Color(0xFF233352) : const Color(0xFFE2E8F0),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: _kAppBlue.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              sign,
-              style: const TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 12,
-                color: _kAppBlue,
-              ),
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              description,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white70 : const Color(0xFF334155),
-              ),
-            ),
           ),
         ],
       ),

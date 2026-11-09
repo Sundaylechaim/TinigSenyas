@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
 import '../widgets/connectivity_badge.dart';
+import '../widgets/fsl_guide_sheet.dart';
 import 'sign_to_text_screen.dart';
 import 'speech_to_text_screen.dart';
 import 'settings_screen.dart';
@@ -36,13 +37,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openLandingPage(BuildContext context) {
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    } else {
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const LandingPageScreen()),
-      );
-    }
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const LandingPageScreen()),
+    );
   }
 
   String _formatTtsLanguage(String code) {
@@ -94,27 +91,32 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
+        titleSpacing: 8,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             // Authentic logo image without artificial box
             Image.asset(
               'assets/images/logo.png',
-              height: 28,
+              height: 26,
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) => const Icon(
                 Icons.sign_language_rounded,
                 color: _kAppBlue,
-                size: 26,
+                size: 24,
               ),
             ),
             const SizedBox(width: 8),
-            const Text(
-              'TinigSenyas',
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: 19,
-                letterSpacing: -0.4,
+            const Flexible(
+              child: Text(
+                'TinigSenyas',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  letterSpacing: -0.4,
+                ),
               ),
             ),
             const SizedBox(width: 5),
@@ -130,12 +132,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.explore_outlined),
-            tooltip: 'Welcome Guide & Phrases',
-            onPressed: () => _openLandingPage(context),
+            icon: const Icon(Icons.menu_book_outlined),
+            tooltip: 'FSL Guide & Phrases',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => showFslGuideSheet(context),
           ),
+          const SizedBox(width: 4),
           const ConnectivityBadge(),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
         ],
       ),
 
@@ -300,9 +304,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.menu_book_rounded, color: _kAppBlue),
+                title: const Text('FSL Guide & Reference', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: const Text('Phrases, alphabet & tips', style: TextStyle(fontSize: 12)),
+                onTap: () {
+                  Navigator.pop(context);
+                  showFslGuideSheet(context);
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.explore_outlined, color: _kAppBlue),
-                title: const Text('Welcome Guide & Phrases', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                subtitle: const Text('Quick gestures & tutorial', style: TextStyle(fontSize: 12)),
+                title: const Text('Welcome Guide & Tutorial', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                subtitle: const Text('Quick introduction to TinigSenyas', style: TextStyle(fontSize: 12)),
                 onTap: () {
                   Navigator.pop(context);
                   _openLandingPage(context);
@@ -329,7 +342,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   showAboutDialog(
                     context: context,
                     applicationName: 'TinigSenyas',
-                    applicationVersion: '1.1.0',
+                    applicationVersion: '1.2.0',
                     applicationLegalese: 'Filipino Sign Language e-Learning & Translation System',
                   );
                 },
@@ -540,7 +553,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           title: 'FSL Guide',
                           subtitle: 'Phrases',
                           isDark: isDarkMode,
-                          onTap: () => _openLandingPage(context),
+                          onTap: () => showFslGuideSheet(context),
                         ),
                       ),
                     ],

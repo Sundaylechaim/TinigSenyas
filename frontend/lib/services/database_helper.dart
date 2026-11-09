@@ -7,6 +7,11 @@ import '../models/conversation.dart';
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
+  final ValueNotifier<int> historyChangeNotifier = ValueNotifier<int>(0);
+
+  void _notifyHistoryChanged() {
+    historyChangeNotifier.value++;
+  }
 
   DatabaseHelper._init();
 
@@ -49,6 +54,7 @@ class DatabaseHelper {
   Future<int> saveConversation(Conversation conversation) async {
     final db = await database;
     final id = await db.insert('conversations', conversation.toMap());
+    _notifyHistoryChanged();
     return id;
   }
 
@@ -94,12 +100,16 @@ class DatabaseHelper {
 
   Future<int> deleteConversation(int id) async {
     final db = await database;
-    return await db.delete('conversations', where: 'id = ?', whereArgs: [id]);
+    final count = await db.delete('conversations', where: 'id = ?', whereArgs: [id]);
+    _notifyHistoryChanged();
+    return count;
   }
 
   Future<int> clearHistory() async {
     final db = await database;
-    return await db.delete('conversations');
+    final count = await db.delete('conversations');
+    _notifyHistoryChanged();
+    return count;
   }
 
   Future<int> getCount() async {
