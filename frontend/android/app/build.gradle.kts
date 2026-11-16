@@ -7,15 +7,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// android/key.properties is gitignored. Without it the release build falls back to the
-// debug key, which installs for testers but can never be uploaded or upgraded on Play.
+// android/key.properties is gitignored. Release builds must use a private release key;
+// falling back to Android's shared debug key would make a public APK unsafe to distribute.
 val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) {
         load(FileInputStream(keystorePropertiesFile))
     }
 }
-val hasReleaseKeystore = keystorePropertiesFile.exists()
+val releaseStorePath = keystoreProperties.getProperty("storeFile")
+val releaseStoreFile = releaseStorePath?.let { file(it) }
+val hasReleaseKeystore = keystorePropertiesFile.exists() && releaseStoreFile?.isFile == true
 
 android {
     namespace = "com.example.tinigsenyas"
@@ -38,7 +40,7 @@ android {
     signingConfigs {
         if (hasReleaseKeystore) {
             create("release") {
-                storeFile = file(keystoreProperties["storeFile"] as String)
+                storeFile = releaseStoreFile
                 storePassword = keystoreProperties["storePassword"] as String
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
@@ -48,13 +50,26 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (hasReleaseKeystore) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
             }
             isMinifyEnabled = false
             isShrinkResources = false
+        }
+    }
+}
+
+// Fail release packaging before AGP can silently sign with the shared debug key,
+// without preventing developers from building debug variants on a clean checkout.
+tasks.configureEach {
+    if (name.startsWith("validateSigning", ignoreCase = true) &&
+        name.contains("Release", ignoreCase = true)) {
+        doFirst {
+            if (!hasReleaseKeystore) {
+                throw GradleException(
+                    "Release signing is not configured. Add android/key.properties and the private release keystore; refusing to sign a release APK with the debug key."
+                )
+            }
         }
     }
 }

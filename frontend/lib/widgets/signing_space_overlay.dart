@@ -3,10 +3,7 @@ import 'package:flutter/material.dart';
 class SigningSpaceOverlay extends StatelessWidget {
   final bool showZoneGuides;
 
-  const SigningSpaceOverlay({
-    super.key,
-    this.showZoneGuides = true,
-  });
+  const SigningSpaceOverlay({super.key, this.showZoneGuides = true});
 
   @override
   Widget build(BuildContext context) {
@@ -108,12 +105,12 @@ class SigningSpaceOverlay extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: isCenter
-            ? const Color(0xFFFFC801).withValues(alpha: 0.2)
+            ? const Color(0xFFF4C95D).withValues(alpha: 0.2)
             : Colors.black.withValues(alpha: 0.25),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isCenter
-              ? const Color(0xFFFFC801).withValues(alpha: 0.6)
+              ? const Color(0xFFF4C95D).withValues(alpha: 0.6)
               : Colors.white.withValues(alpha: 0.2),
           width: 1,
         ),
@@ -121,7 +118,7 @@ class SigningSpaceOverlay extends StatelessWidget {
       child: Text(
         text,
         style: TextStyle(
-          color: isCenter ? const Color(0xFFFFC801) : Colors.white70,
+          color: isCenter ? const Color(0xFFF4C95D) : Colors.white70,
           fontSize: 11,
           fontWeight: isCenter ? FontWeight.w700 : FontWeight.w500,
           letterSpacing: 0.2,
@@ -130,4 +127,3 @@ class SigningSpaceOverlay extends StatelessWidget {
     );
   }
 }
-

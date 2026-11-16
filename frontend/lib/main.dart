@@ -13,7 +13,8 @@ import 'screens/landing_page_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/speech_to_text_screen.dart';
-import 'screens/settings_screen.dart';
+import 'screens/sign_to_text_screen.dart';
+import 'screens/text_to_sign_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -99,13 +100,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _visitedTabs = {widget.initialIndex};
   }
 
+  void _selectTab(int index) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    setState(() {
+      _currentIndex = index;
+      _visitedTabs.add(index);
+    });
+  }
+
   Widget _screenForTab(int index) {
+    // Only keep SignToTextScreen mounted while its tab is active so camera
+    // hardware, MediaPipe/TFLite, and wakelock are released on tab switches.
+    if (index == 1 && _currentIndex != 1) return const SizedBox.shrink();
     if (!_visitedTabs.contains(index)) return const SizedBox.shrink();
     return switch (index) {
-      0 => const HomeScreen(),
-      1 => const HistoryScreen(),
-      2 => const SpeechToTextScreen(),
-      3 => const SettingsScreen(),
+      0 => HomeScreen(onSelectTab: _selectTab),
+      1 => const SignToTextScreen(),
+      2 => const TextToSignScreen(),
+      3 => const SpeechToTextScreen(),
+      4 => const HistoryScreen(),
       _ => const SizedBox.shrink(),
     };
   }
@@ -117,7 +130,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         if (_currentIndex != 0) {
-          // Gracefully return to Home tab if on History/Speech/Settings
+          // Return to Home from any primary navigation destination.
           setState(() {
             _currentIndex = 0;
             _visitedTabs.add(0);
@@ -145,53 +158,52 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       child: Scaffold(
         body: IndexedStack(
           index: _currentIndex,
-          children: List.generate(4, _screenForTab),
+          children: List.generate(5, _screenForTab),
         ),
         bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(
-              color: Theme.of(context).brightness == Brightness.dark
-                  ? const Color(0xFF223253)
-                  : const Color(0xFFE2E8F0),
-              width: 1,
+          decoration: BoxDecoration(
+            border: Border(
+              top: BorderSide(
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? const Color(0xFF223253)
+                    : const Color(0xFFE2E8F0),
+                width: 1,
+              ),
             ),
           ),
-        ),
-        child: NavigationBar(
-          selectedIndex: _currentIndex,
-          onDestinationSelected: (index) {
-            ScaffoldMessenger.of(context).clearSnackBars();
-            setState(() {
-              _currentIndex = index;
-              _visitedTabs.add(index);
-            });
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home_rounded),
-              label: 'Home',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.history_outlined),
-              selectedIcon: Icon(Icons.history_rounded),
-              label: 'History',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.mic_none_rounded),
-              selectedIcon: Icon(Icons.mic_rounded),
-              label: 'Speech',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              selectedIcon: Icon(Icons.settings_rounded),
-              label: 'Settings',
-            ),
-          ],
+          child: NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: _selectTab,
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home_rounded),
+                label: 'Home',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.sign_language_rounded),
+                selectedIcon: Icon(Icons.sign_language_rounded),
+                label: 'Sign',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.text_fields_rounded),
+                selectedIcon: Icon(Icons.text_fields_rounded),
+                label: 'Type',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.mic_none_rounded),
+                selectedIcon: Icon(Icons.mic_rounded),
+                label: 'Voice',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.history_outlined),
+                selectedIcon: Icon(Icons.history_rounded),
+                label: 'History',
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 }

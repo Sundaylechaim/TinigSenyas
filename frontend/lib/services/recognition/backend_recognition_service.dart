@@ -42,23 +42,25 @@ class BackendRecognitionService implements RecognitionService {
   RecognitionMode get mode => _mode;
 
   @override
-  set mode(RecognitionMode value) => _mode = value;
+  set mode(RecognitionMode value) {
+    if (_mode == value) return;
+    _mode = value;
+    unawaited(_syncModeWithBackend());
+  }
 
   String? _lastEmittedLabel;
   DateTime _lastEmittedTime = DateTime.fromMillisecondsSinceEpoch(0);
 
-  BackendRecognitionService({
-    String? baseUrl,
-    this.settings,
-    Dio? dio,
-  })  : baseUrl = baseUrl ?? settings?.ttsServerUrl ?? 'http://127.0.0.1:5000',
-        _dio = dio ??
-            Dio(
-              BaseOptions(
-                connectTimeout: const Duration(milliseconds: 1000),
-                receiveTimeout: const Duration(milliseconds: 1000),
-              ),
-            );
+  BackendRecognitionService({String? baseUrl, this.settings, Dio? dio})
+    : baseUrl = baseUrl ?? settings?.ttsServerUrl ?? 'http://127.0.0.1:5000',
+      _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(milliseconds: 1000),
+              receiveTimeout: const Duration(milliseconds: 1000),
+            ),
+          );
 
   @override
   bool get isModelReady => _isInitialized;
@@ -85,6 +87,19 @@ class BackendRecognitionService implements RecognitionService {
     } catch (_) {
       _isInitialized = true;
     }
+    await _syncModeWithBackend();
+  }
+
+  Future<void> _syncModeWithBackend() async {
+    try {
+      await _dio.post(
+        '$baseUrl/api/v1/predict/mode',
+        queryParameters: {'mode': _mode.name},
+      );
+    } catch (_) {
+      // The live frame request carries the mode too, so a temporary control
+      // request failure does not prevent recognition from using the selection.
+    }
   }
 
   @override
@@ -92,7 +107,9 @@ class BackendRecognitionService implements RecognitionService {
     if (_isRunning) return;
     _isRunning = true;
     _pollingTimer?.cancel();
-    _pollingTimer = Timer.periodic(const Duration(milliseconds: 150), (_) async {
+    _pollingTimer = Timer.periodic(const Duration(milliseconds: 150), (
+      _,
+    ) async {
       if (!_isRunning) return;
       await _pollLivePrediction();
     });
@@ -102,6 +119,7 @@ class BackendRecognitionService implements RecognitionService {
     try {
       final response = await _dio.post(
         '$baseUrl/api/v1/predict/frame',
+        queryParameters: {'mode': _mode.name},
         data: FormData.fromMap({
           'frame': MultipartFile.fromBytes(jpegBytes, filename: 'frame.jpg'),
         }),
@@ -159,10 +177,25 @@ class BackendRecognitionService implements RecognitionService {
         }
 
         final confidence = (data['confidence'] as num?)?.toDouble() ?? 0.0;
+        final top2Confidence =
+            (data['top2_confidence'] as num?)?.toDouble() ?? 0.0;
+        final top2Label = data['top2_label'] as String? ?? '';
         final isStable = data['is_stable'] as bool? ?? false;
         final label = data['label'] as String?;
+        final signType = data['sign_type'] as String? ?? 'conversational';
+        // Chapter 3 decision rule: accept >= 60% only with a 12-point
+        // top-1 margin, or accept directly at >= 75%. Alphabet responses
+        // without a real top-2 class must meet the strict 75% fallback.
+        final passesConfidenceGate =
+            confidence >= 0.75 ||
+            (top2Label.isNotEmpty &&
+                confidence >= 0.60 &&
+                confidence - top2Confidence >= 0.12);
 
-        if (label != null && label.isNotEmpty && isStable && confidence >= 0.50) {
+        if (label != null &&
+            label.isNotEmpty &&
+            isStable &&
+            passesConfidenceGate) {
           final now = DateTime.now();
           if (label != _lastEmittedLabel ||
               now.difference(_lastEmittedTime).inMilliseconds > 1500) {
@@ -173,7 +206,11 @@ class BackendRecognitionService implements RecognitionService {
                 label: label,
                 confidence: confidence,
                 timestamp: now,
-                source: 'st_gcn_model',
+                source: signType == 'alphabet'
+                    ? 'fsl_alphabet_model'
+                    : signType == 'medical'
+                    ? 'fsl_medical_model'
+                    : 'st_gcn_model',
               ),
             );
           }
@@ -192,9 +229,17 @@ class BackendRecognitionService implements RecognitionService {
   }
 
   @override
-  Stream<List<List<Offset>>>? get landmarkPointsStream => _progressController.stream.map((p) {
+  Stream<List<List<Offset>>>? get landmarkPointsStream =>
+      _progressController.stream.map((p) {
         return p.handLandmarks.map((hand) {
-          return hand.map((pt) => Offset(pt.isNotEmpty ? pt[0] : 0.0, pt.length > 1 ? pt[1] : 0.0)).toList();
+          return hand
+              .map(
+                (pt) => Offset(
+                  pt.isNotEmpty ? pt[0] : 0.0,
+                  pt.length > 1 ? pt[1] : 0.0,
+                ),
+              )
+              .toList();
         }).toList();
       });
 

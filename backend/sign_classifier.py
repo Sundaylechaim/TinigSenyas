@@ -111,6 +111,14 @@ class SignClassifier:
         self.classes = np.load(CLASSES_PATH, allow_pickle=True)
         self.num_classes = len(self.classes)
 
+        self.has_medical_model = False
+        if os.path.isfile(MEDICAL_TFLITE_PATH) and os.path.isfile(MEDICAL_CLASSES_PATH):
+            try:
+                self.medical_classes = np.load(MEDICAL_CLASSES_PATH, allow_pickle=True)
+                self.has_medical_model = True
+            except Exception:
+                self.has_medical_model = False
+
         # Initialize Alphabet model if present
         self.has_alphabet_model = False
         if os.path.isfile(ALPHABET_TFLITE_PATH) and os.path.isfile(ALPHABET_CLASSES_PATH):
@@ -129,6 +137,7 @@ class SignClassifier:
         # Motion sequence rolling buffer
         self.frame_buffer = deque(maxlen=SEQUENCE_LENGTH)
         self.prob_history = deque(maxlen=PROB_HISTORY_SIZE)
+        self.medical_prob_history = deque(maxlen=PROB_HISTORY_SIZE)
 
         self.smoothed_left = None
         self.smoothed_right = None
@@ -144,6 +153,7 @@ class SignClassifier:
         self.is_stable = False
         self.detected_is_left_hand = False
         self.sign_type = "conversational"  # "alphabet" or "conversational"
+        self.requested_mode = "auto"
 
         # Consensus stability trackers to prevent label flickering
         self._candidate_label: Optional[str] = None
@@ -182,6 +192,22 @@ class SignClassifier:
             except Exception as e:
                 self.has_alphabet_model = False
 
+        if self.has_medical_model:
+            try:
+                self.medical_interpreter = Interpreter(model_path=MEDICAL_TFLITE_PATH, num_threads=4)
+                self.medical_interpreter.allocate_tensors()
+                self.medical_input_index = self.medical_interpreter.get_input_details()[0]["index"]
+                self.medical_output_index = self.medical_interpreter.get_output_details()[0]["index"]
+                medical_output_count = self.medical_interpreter.get_output_details()[0]["shape"][-1]
+                if medical_output_count != len(self.medical_classes):
+                    raise ValueError(
+                        f"Medical model has {medical_output_count} outputs but "
+                        f"{len(self.medical_classes)} labels were loaded."
+                    )
+            except Exception as e:
+                print(f"[SignClassifier] Medical FSL model could not be initialized: {e}")
+                self.has_medical_model = False
+
     def _predict_alphabet(self, hand_features_63: np.ndarray) -> Tuple[str, float]:
         if not self.has_alphabet_model:
             return "", 0.0
@@ -217,14 +243,22 @@ class SignClassifier:
         self.hand_detector = vision.HandLandmarker.create_from_options(hand_options)
         self.pose_detector = vision.PoseLandmarker.create_from_options(pose_options)
 
-    def _predict_raw(self, seq_60: np.ndarray) -> np.ndarray:
+    def _predict_raw(self, seq_60: np.ndarray, model: str = "conversational") -> np.ndarray:
         """Runs LiteRT forward pass on shape (1, 60, 75, 3)"""
         input_data = np.expand_dims(seq_60, axis=0).astype(np.float32)
-        self.interpreter.set_tensor(self.input_index, input_data)
-        self.interpreter.invoke()
-        return self.interpreter.get_tensor(self.output_index)[0]
+        interpreter = self.medical_interpreter if model == "medical" else self.interpreter
+        input_index = self.medical_input_index if model == "medical" else self.input_index
+        output_index = self.medical_output_index if model == "medical" else self.output_index
+        interpreter.set_tensor(input_index, input_data)
+        interpreter.invoke()
+        return interpreter.get_tensor(output_index)[0]
 
-    def _evaluate_hypotheses(self, motion_seq: np.ndarray, detected_hands_count: int) -> Tuple[str, float, str, float]:
+    def _evaluate_hypotheses(
+        self,
+        motion_seq: np.ndarray,
+        detected_hands_count: int,
+        model: str = "conversational",
+    ) -> Tuple[str, float, str, float]:
         """
         Multi-Hypothesis Evaluation:
         1. Hypothesis A (Raw Slots): Evaluates as assembled.
@@ -239,7 +273,9 @@ class SignClassifier:
         else:
             seq_a = resample_sequence(motion_seq)
 
-        probs_a = self._predict_raw(seq_a)
+        labels = self.medical_classes if model == "medical" else self.classes
+        history = self.medical_prob_history if model == "medical" else self.prob_history
+        probs_a = self._predict_raw(seq_a, model=model)
         best_probs = probs_a.copy()
 
         # Hypothesis B: Canonical Mirrored Single-Hand (ONLY if detected hand was a Left hand)
@@ -250,9 +286,9 @@ class SignClassifier:
                     seq_b[f, 54:75, :] = mirror_hand_across_wrist(seq_b[f, 54:75, :])
             seq_b[:, 33:54, :] = 0.0  # Clear left-hand slot
 
-            probs_b = self._predict_raw(seq_b)
+            probs_b = self._predict_raw(seq_b, model=model)
             top_b_idx = int(np.argmax(probs_b))
-            top_b_name = str(self.classes[top_b_idx])
+            top_b_name = str(labels[top_b_idx])
 
             # If mirrored hypothesis yields higher confidence for single-hand sign, adopt it
             if top_b_name not in TWO_HANDED_TRAINED_CLASSES and np.max(probs_b) > np.max(best_probs):
@@ -262,18 +298,18 @@ class SignClassifier:
         if detected_hands_count >= 2:
             seq_c = seq_a.copy()
             seq_c[:, 33:54, :] = 0.0
-            probs_c = self._predict_raw(seq_c)
+            probs_c = self._predict_raw(seq_c, model=model)
             top_c_idx = int(np.argmax(probs_c))
-            top_c_name = str(self.classes[top_c_idx])
+            top_c_name = str(labels[top_c_idx])
             if top_c_name not in TWO_HANDED_TRAINED_CLASSES and np.max(probs_c) > np.max(best_probs):
                 best_probs = probs_c
 
         # Smooth probabilities across recent predictions
-        self.prob_history.append(best_probs)
-        smoothed_probs = np.mean(np.asarray(self.prob_history), axis=0)
+        history.append(best_probs)
+        smoothed_probs = np.mean(np.asarray(history), axis=0)
 
         # Suppress invalid / corrupted class label if present at index 126
-        if len(smoothed_probs) > 126 and str(self.classes[126]) in ('', '\ufffd', '?'):
+        if model != "medical" and len(smoothed_probs) > 126 and str(labels[126]) in ('', '\ufffd', '?'):
             smoothed_probs[126] = 0.0
 
         top_idxs = np.argsort(smoothed_probs)[::-1]
@@ -282,8 +318,8 @@ class SignClassifier:
 
         conf1 = float(smoothed_probs[top1_idx])
         conf2 = float(smoothed_probs[top2_idx])
-        name1 = str(self.classes[top1_idx])
-        name2 = str(self.classes[top2_idx])
+        name1 = str(labels[top1_idx])
+        name2 = str(labels[top2_idx])
 
         return name1, conf1, name2, conf2
 
@@ -428,7 +464,29 @@ class SignClassifier:
 
         return False
 
-    def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, Dict]:
+    def set_mode(self, mode: str) -> None:
+        if mode not in {"auto", "alphabet", "phrases", "medical"}:
+            raise ValueError(f"Unsupported recognition mode: {mode}")
+        if mode == "medical" and not self.has_medical_model:
+            raise RuntimeError("The Medical FSL model is not available on this backend.")
+        if mode == self.requested_mode:
+            return
+        self.requested_mode = mode
+        self.frame_buffer.clear()
+        self.prob_history.clear()
+        self.medical_prob_history.clear()
+        self._candidate_label = None
+        self._candidate_count = 0
+        self._alpha_candidate = None
+        self._alpha_count = 0
+        self.latest_label = None
+        self.latest_confidence = 0.0
+        self.latest_top2 = ("", 0.0)
+        self.is_stable = False
+
+    def process_frame(
+        self, frame: np.ndarray, mode: Optional[str] = None
+    ) -> Tuple[np.ndarray, Dict]:
         """
         Real-time frame processing pipeline:
         1. MediaPipe Pose & Hands extraction.
@@ -437,6 +495,9 @@ class SignClassifier:
         4. Multi-hypothesis evaluation.
         5. Visual overlay & HUD rendering.
         """
+        if mode is not None and mode != self.requested_mode:
+            self.set_mode(mode)
+
         self.frame_idx += 1
         h, w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -591,6 +652,8 @@ class SignClassifier:
             # Priority 0: Dynamic Fingerspelled Letter 'J' (downward stroke + upward hook)
             alphabet_recognized = False
             if (
+                self.requested_mode in ("auto", "alphabet")
+                and
                 len(detected_hands) == 1
                 and not self.is_paused
                 and self.j_cooldown == 0
@@ -610,7 +673,13 @@ class SignClassifier:
 
             # Priority 1: Alphabet Fingerspelling (A-Z)
             # Evaluated when 1 hand is held relatively steady in the active signing zone
-            if not alphabet_recognized and len(detected_hands) == 1 and self.norm_hand_63 is not None and motion_val < 0.015:
+            if (
+                not alphabet_recognized
+                and self.requested_mode in ("auto", "alphabet")
+                and len(detected_hands) == 1
+                and self.norm_hand_63 is not None
+                and motion_val < 0.015
+            ):
                 alpha_name, alpha_conf = self._predict_alphabet(self.norm_hand_63)
                 if alpha_conf >= 0.50:
                     if alpha_name == self._alpha_candidate:
@@ -629,19 +698,39 @@ class SignClassifier:
                         self._candidate_label = None
                         self._candidate_count = 0
 
-            # Priority 2: Conversational Dynamic Signs (103 FSL classes via ST-GCN)
-            # Evaluated when sufficient frames are gathered and dynamic movement is active
-            if not alphabet_recognized and len(self.frame_buffer) >= 20 and self.frame_idx % 2 == 0:
+            # Priority 2: Route the selected ST-GCN mode to its matching model.
+            selected_stgcn_mode = (
+                "medical" if self.requested_mode == "medical" else "conversational"
+            )
+            stgcn_enabled = self.requested_mode in ("auto", "phrases") or (
+                self.requested_mode == "medical" and self.has_medical_model
+            )
+            if (
+                not alphabet_recognized
+                and self.requested_mode != "alphabet"
+                and stgcn_enabled
+                and len(self.frame_buffer) >= 20
+                and self.frame_idx % 2 == 0
+            ):
                 self._alpha_count = 0
                 self._alpha_candidate = None
                 motion_array = np.asarray(self.frame_buffer, dtype=np.float32)
-                name1, conf1, name2, conf2 = self._evaluate_hypotheses(motion_array, len(detected_hands))
+                name1, conf1, name2, conf2 = self._evaluate_hypotheses(
+                    motion_array,
+                    len(detected_hands),
+                    model=selected_stgcn_mode,
+                )
 
                 margin = conf1 - conf2
+                is_unmapped_medical_class = (
+                    selected_stgcn_mode == "medical"
+                    and name1.startswith("Medical_")
+                )
 
                 is_recognized = (
                     len(self.frame_buffer) >= 22
                     and motion_val >= MIN_DYNAMIC_MOTION
+                    and not is_unmapped_medical_class
                     and (
                         (conf1 >= CONFIDENCE_THRESHOLD)
                         or (conf1 >= MIN_CONFIDENCE_FALLBACK and margin >= MARGIN_THRESHOLD)
@@ -659,7 +748,7 @@ class SignClassifier:
                     if self._candidate_count >= CONSECUTIVE_STABILITY_REQUIRED:
                         self.latest_label = name1
                         self.is_stable = True
-                        self.sign_type = "conversational"
+                        self.sign_type = selected_stgcn_mode
                         # If recognized and held, trim buffer tail to allow immediate transition to next sign
                         if self._candidate_count > CONSECUTIVE_STABILITY_REQUIRED + 4:
                             recent = list(self.frame_buffer)[-8:]
@@ -669,7 +758,7 @@ class SignClassifier:
 
                     self.latest_confidence = conf1
                     self.latest_top2 = (name2, conf2)
-                elif not self.is_stable or self.sign_type != "alphabet":
+                elif not self.is_stable or self.sign_type not in ("alphabet",):
                     self.is_stable = False
                     self.latest_confidence = 0.0
                     self.latest_top2 = (name2, conf2)

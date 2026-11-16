@@ -15,7 +15,8 @@ import 'recognition_service.dart';
 class TfliteRecognitionService implements RecognitionService {
   final _predictionsController = StreamController<SignResult>.broadcast();
   final _pauseStatusController = StreamController<bool>.broadcast();
-  final _landmarkStreamController = StreamController<List<List<Offset>>>.broadcast();
+  final _landmarkStreamController =
+      StreamController<List<List<Offset>>>.broadcast();
 
   Interpreter? _fslModelInterpreter;
   Interpreter? _alphabetInterpreter;
@@ -26,28 +27,82 @@ class TfliteRecognitionService implements RecognitionService {
   List<String> _fslLabels = [];
   List<String> _medicalLabels = [];
   final List<String> _alphabetLabels = [
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-    'N', 'Ng', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'Ñ'
+    'A',
+    'B',
+    'C',
+    'D',
+    'E',
+    'F',
+    'G',
+    'H',
+    'I',
+    'J',
+    'K',
+    'L',
+    'M',
+    'N',
+    'Ng',
+    'O',
+    'P',
+    'Q',
+    'R',
+    'S',
+    'T',
+    'U',
+    'V',
+    'W',
+    'X',
+    'Y',
+    'Z',
+    'Ñ',
   ];
+  static const int _conversationalClassCount = 103;
+  static const int _medicalClassCount = 25;
 
   RecognitionMode _mode = RecognitionMode.auto;
   @override
   RecognitionMode get mode => _mode;
   @override
-  set mode(RecognitionMode val) => _mode = val;
+  set mode(RecognitionMode val) {
+    if (_mode == val) return;
+    _mode = val;
+    _alphaProbHistory.clear();
+    _alphaCandidate = null;
+    _alphaCandidateCount = 0;
+    _alphaEmittedLabel = null;
+    _alphaReleaseFrameCount = 0;
+    _fslProbHistory.clear();
+    _fslCandidate = null;
+    _fslCandidateCount = 0;
+    _fslEmittedLabel = null;
+    _fslReleaseFrameCount = 0;
+    _medProbHistory.clear();
+    _medCandidate = null;
+    _medCandidateCount = 0;
+  }
 
   Offset? _lastWrist;
+  DateTime? _lastWristTimestamp;
   final List<double> _motionHistory = [];
+  int _missingHandFrames = 0;
+  int _lastTrackedHandCount = 0;
+  bool _motionRouteActive = false;
 
   // Exponential Moving Average (EMA) landmark smoothing
   List<(double, double, double)>? _smoothedPrimaryHand;
   List<(double, double, double)>? _smoothedSecondaryHand;
-  static const double _handSmoothAlpha = 0.80;
+  static const double _handSmoothAlpha = 0.65;
+  static const int _trackingGraceFrames = 2;
 
   // Rolling Softmax Probability Distribution Smoothing
+  final List<List<double>> _alphaProbHistory = [];
   final List<List<double>> _fslProbHistory = [];
   final List<List<double>> _medProbHistory = [];
+  static const int _alphaProbHistorySize = 5;
   static const int _probHistorySize = 5;
+  static const double _paperMinimumConfidence = 0.60;
+  static const double _paperMinimumMargin = 0.12;
+  static const double _paperHighConfidence = 0.75;
 
   bool _isInitialized = false;
   bool _isRunning = false;
@@ -64,8 +119,12 @@ class TfliteRecognitionService implements RecognitionService {
   DateTime _lastEmittedTime = DateTime.fromMillisecondsSinceEpoch(0);
   String? _alphaCandidate;
   int _alphaCandidateCount = 0;
+  String? _alphaEmittedLabel;
+  int _alphaReleaseFrameCount = 0;
   String? _fslCandidate;
   int _fslCandidateCount = 0;
+  String? _fslEmittedLabel;
+  int _fslReleaseFrameCount = 0;
   String? _medCandidate;
   int _medCandidateCount = 0;
 
@@ -78,8 +137,114 @@ class TfliteRecognitionService implements RecognitionService {
   int _restZoneFrameCount = 0;
   static const int _restZoneThreshold = 15; // ~500ms of sustained hands at rest
 
+  bool _passesPaperConfidenceGate(double top1, double top2) =>
+      top1 >= _paperHighConfidence ||
+      (top1 >= _paperMinimumConfidence && top1 - top2 >= _paperMinimumMargin);
+
   @override
-  bool get isModelReady => _isInitialized && _alphabetInterpreter != null;
+  bool get isModelReady =>
+      _isInitialized &&
+      _alphabetInterpreter != null &&
+      _fslModelInterpreter != null &&
+      _medicalModelInterpreter != null &&
+      _fslLabels.length == _conversationalClassCount &&
+      _alphabetLabels.length == 28 &&
+      _medicalLabels.length == _medicalClassCount;
+
+  bool _matchesShape(List<int> actual, List<int> expected) =>
+      actual.length == expected.length &&
+      List.generate(
+        actual.length,
+        (index) => actual[index] == expected[index],
+      ).every((matches) => matches);
+
+  Future<List<String>> _loadLabels({
+    required File? localFile,
+    required String assetPath,
+    required int expectedCount,
+    required String modelName,
+  }) async {
+    if (localFile != null && await localFile.exists()) {
+      try {
+        final localLabels = (await localFile.readAsString())
+            .split(RegExp(r'\r?\n'))
+            .map((label) => label.trim())
+            .where((label) => label.isNotEmpty)
+            .toList();
+        if (localLabels.length == expectedCount) return localLabels;
+        debugPrint(
+          '[TfliteRecognitionService] Ignoring $modelName labels: '
+          'expected $expectedCount, found ${localLabels.length}.',
+        );
+      } catch (error) {
+        debugPrint(
+          '[TfliteRecognitionService] Could not read local $modelName labels: $error',
+        );
+      }
+    }
+
+    try {
+      final bundledLabels = (await rootBundle.loadString(assetPath))
+          .split(RegExp(r'\r?\n'))
+          .map((label) => label.trim())
+          .where((label) => label.isNotEmpty)
+          .toList();
+      if (bundledLabels.length == expectedCount) return bundledLabels;
+      debugPrint(
+        '[TfliteRecognitionService] Invalid bundled $modelName labels: '
+        'expected $expectedCount, found ${bundledLabels.length}.',
+      );
+    } catch (error) {
+      debugPrint(
+        '[TfliteRecognitionService] Could not load bundled $modelName labels: $error',
+      );
+    }
+    return const [];
+  }
+
+  Future<Interpreter?> _loadValidatedInterpreter({
+    required String modelName,
+    required File? localFile,
+    required String assetPath,
+    required List<int> inputShape,
+    required List<int> outputShape,
+    required InterpreterOptions options,
+  }) async {
+    final loaders = <Future<Interpreter> Function()>[];
+    if (localFile != null && await localFile.exists()) {
+      loaders.add(
+        () async => Interpreter.fromFile(localFile, options: options),
+      );
+    }
+    loaders.add(() => Interpreter.fromAsset(assetPath, options: options));
+
+    for (final load in loaders) {
+      Interpreter? interpreter;
+      try {
+        interpreter = await load();
+        interpreter.allocateTensors();
+        final actualInput = interpreter.getInputTensor(0).shape;
+        final actualOutput = interpreter.getOutputTensor(0).shape;
+        if (!_matchesShape(actualInput, inputShape) ||
+            !_matchesShape(actualOutput, outputShape)) {
+          throw StateError(
+            '$modelName tensor mismatch: input $actualInput, output $actualOutput.',
+          );
+        }
+        debugPrint(
+          '[TfliteRecognitionService] $modelName connected: '
+          '$actualInput -> $actualOutput.',
+        );
+        return interpreter;
+      } catch (error) {
+        interpreter?.close();
+        debugPrint(
+          '[TfliteRecognitionService] $modelName load failed; trying next source: $error',
+        );
+      }
+    }
+    return null;
+  }
 
   @override
   bool get isPaused => _isPaused;
@@ -90,17 +255,7 @@ class TfliteRecognitionService implements RecognitionService {
     _isPaused = value;
     _pauseStatusController.add(value);
     if (value) {
-      _sequenceBuffer.clear();
-      _fslProbHistory.clear();
-      _medProbHistory.clear();
-      _smoothedPrimaryHand = null;
-      _smoothedSecondaryHand = null;
-      _alphaCandidate = null;
-      _alphaCandidateCount = 0;
-      _fslCandidate = null;
-      _fslCandidateCount = 0;
-      _medCandidate = null;
-      _medCandidateCount = 0;
+      _resetTrackingState();
     }
   }
 
@@ -108,7 +263,8 @@ class TfliteRecognitionService implements RecognitionService {
   Stream<bool>? get pauseStatus => _pauseStatusController.stream;
 
   @override
-  Stream<List<List<Offset>>>? get landmarkPointsStream => _landmarkStreamController.stream;
+  Stream<List<List<Offset>>>? get landmarkPointsStream =>
+      _landmarkStreamController.stream;
 
   @override
   Stream<SignResult> get predictions => _predictionsController.stream;
@@ -127,7 +283,9 @@ class TfliteRecognitionService implements RecognitionService {
             delegate: HandLandmarkerDelegate.gpu,
           );
         } catch (e) {
-          debugPrint('[TfliteRecognitionService] GPU delegate failed, trying CPU: $e');
+          debugPrint(
+            '[TfliteRecognitionService] GPU delegate failed, trying CPU: $e',
+          );
           _handLandmarker = HandLandmarkerPlugin.create(
             numHands: 2,
             minHandDetectionConfidence: 0.5,
@@ -153,72 +311,77 @@ class TfliteRecognitionService implements RecognitionService {
         modelsDir = Directory(p.join(appDir.path, 'models'));
       }
 
-      // 1. Load FSL Conversational Labels (103 classes)
-      final localLabelsFile = modelsDir != null ? File(p.join(modelsDir.path, 'labels.txt')) : null;
-      if (localLabelsFile != null && await localLabelsFile.exists()) {
-        final content = await localLabelsFile.readAsString();
-        _fslLabels = content.split(RegExp(r'\r?\n')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-      } else {
-        final bundledLabels = await rootBundle.loadString('assets/model/labels.txt');
-        _fslLabels = bundledLabels.split(RegExp(r'\r?\n')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-      }
+      // Each model is loaded and shape-checked independently. If an OTA model
+      // is incompatible, fall back to the bundled model instead of silently
+      // leaving a selected recognition mode disconnected.
+      final localLabelsFile = modelsDir != null
+          ? File(p.join(modelsDir.path, 'labels.txt'))
+          : null;
+      _fslLabels = await _loadLabels(
+        localFile: localLabelsFile,
+        assetPath: 'assets/model/labels.txt',
+        expectedCount: _conversationalClassCount,
+        modelName: 'conversational',
+      );
 
-      // 2. Load Alphabet Model (fsl_alphabet.tflite)
+      final localMedLabelsFile = modelsDir != null
+          ? File(p.join(modelsDir.path, 'medical_labels.txt'))
+          : null;
+      _medicalLabels = await _loadLabels(
+        localFile: localMedLabelsFile,
+        assetPath: 'assets/model/medical_labels.txt',
+        expectedCount: _medicalClassCount,
+        modelName: 'medical',
+      );
+
       _alphabetInterpreter?.close();
       _alphabetInterpreter = null;
-      final localAlphaFile = modelsDir != null ? File(p.join(modelsDir.path, 'fsl_alphabet.tflite')) : null;
-      final options = InterpreterOptions()..threads = 2;
+      final localAlphaFile = modelsDir != null
+          ? File(p.join(modelsDir.path, 'fsl_alphabet.tflite'))
+          : null;
+      _alphabetInterpreter = await _loadValidatedInterpreter(
+        modelName: 'alphabet',
+        localFile: localAlphaFile,
+        assetPath: 'assets/model/fsl_alphabet.tflite',
+        inputShape: const [1, 63],
+        outputShape: [1, _alphabetLabels.length],
+        options: InterpreterOptions()..threads = 2,
+      );
 
-      if (localAlphaFile != null && await localAlphaFile.exists()) {
-        _alphabetInterpreter = Interpreter.fromFile(localAlphaFile, options: options);
-      } else {
-        _alphabetInterpreter = await Interpreter.fromAsset('assets/model/fsl_alphabet.tflite', options: options);
-      }
-
-      // 3. Load Conversational ST-GCN Model (fsl_model.tflite)
       _fslModelInterpreter?.close();
       _fslModelInterpreter = null;
-      final localModelFile = modelsDir != null ? File(p.join(modelsDir.path, 'fsl_model.tflite')) : null;
-      final modelOptions = InterpreterOptions()..threads = 4;
-
-      if (localModelFile != null && await localModelFile.exists()) {
-        _fslModelInterpreter = Interpreter.fromFile(localModelFile, options: modelOptions);
-      } else {
-        try {
-          _fslModelInterpreter = await Interpreter.fromAsset('assets/model/fsl_model.tflite', options: modelOptions);
-        } catch (e) {
-          debugPrint('[TfliteRecognitionService] Conversational model load note: $e');
-        }
-      }
-
-      // 4. Load Medical ST-GCN Model (fsl_medical.tflite) and Labels
-      final localMedLabelsFile = modelsDir != null ? File(p.join(modelsDir.path, 'medical_labels.txt')) : null;
-      if (localMedLabelsFile != null && await localMedLabelsFile.exists()) {
-        final content = await localMedLabelsFile.readAsString();
-        _medicalLabels = content.split(RegExp(r'\r?\n')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-      } else {
-        try {
-          final bundledLabels = await rootBundle.loadString('assets/model/medical_labels.txt');
-          _medicalLabels = bundledLabels.split(RegExp(r'\r?\n')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-        } catch (e) {
-          debugPrint('[TfliteRecognitionService] Bundled medical labels note: $e');
-        }
-      }
+      final localModelFile = modelsDir != null
+          ? File(p.join(modelsDir.path, 'fsl_model.tflite'))
+          : null;
+      _fslModelInterpreter = await _loadValidatedInterpreter(
+        modelName: 'conversational ST-GCN',
+        localFile: localModelFile,
+        assetPath: 'assets/model/fsl_model.tflite',
+        inputShape: const [1, 60, 75, 3],
+        outputShape: [1, _conversationalClassCount],
+        options: InterpreterOptions()..threads = 4,
+      );
 
       _medicalModelInterpreter?.close();
       _medicalModelInterpreter = null;
-      final localMedModelFile = modelsDir != null ? File(p.join(modelsDir.path, 'fsl_medical.tflite')) : null;
-      if (localMedModelFile != null && await localMedModelFile.exists()) {
-        _medicalModelInterpreter = Interpreter.fromFile(localMedModelFile, options: modelOptions);
-      } else {
-        try {
-          _medicalModelInterpreter = await Interpreter.fromAsset('assets/model/fsl_medical.tflite', options: modelOptions);
-        } catch (e) {
-          debugPrint('[TfliteRecognitionService] Medical model load note: $e');
-        }
-      }
+      final localMedModelFile = modelsDir != null
+          ? File(p.join(modelsDir.path, 'fsl_medical.tflite'))
+          : null;
+      _medicalModelInterpreter = await _loadValidatedInterpreter(
+        modelName: 'medical ST-GCN',
+        localFile: localMedModelFile,
+        assetPath: 'assets/model/fsl_medical.tflite',
+        inputShape: const [1, 60, 75, 3],
+        outputShape: [1, _medicalClassCount],
+        options: InterpreterOptions()..threads = 4,
+      );
 
-      debugPrint('[TfliteRecognitionService] Models reloaded successfully. Labels: ${_fslLabels.length}, Alphabet: ${_alphabetLabels.length}, Medical: ${_medicalLabels.length}');
+      debugPrint(
+        '[TfliteRecognitionService] Model connection status: '
+        'alphabet=${_alphabetInterpreter != null}, '
+        'conversational=${_fslModelInterpreter != null}, '
+        'medical=${_medicalModelInterpreter != null}.',
+      );
     } catch (e) {
       debugPrint('[TfliteRecognitionService] Error reloading models: $e');
     }
@@ -235,7 +398,9 @@ class TfliteRecognitionService implements RecognitionService {
       _handSubscription = _handLandmarker!.landmarkStream.listen(
         _handleDetectedHands,
         onError: (err) {
-          debugPrint('[TfliteRecognitionService] Landmarker stream error: $err');
+          debugPrint(
+            '[TfliteRecognitionService] Landmarker stream error: $err',
+          );
         },
       );
     }
@@ -246,7 +411,7 @@ class TfliteRecognitionService implements RecognitionService {
     _isRunning = false;
     _handSubscription?.cancel();
     _handSubscription = null;
-    _sequenceBuffer.clear();
+    _resetTrackingState();
   }
 
   int _sensorOrientation = 90;
@@ -334,53 +499,165 @@ class TfliteRecognitionService implements RecognitionService {
     return result;
   }
 
+  double _wristDistance(
+    List<(double, double, double)> first,
+    List<(double, double, double)> second,
+  ) {
+    if (first.isEmpty || second.isEmpty) return double.infinity;
+    final dx = first[0].$1 - second[0].$1;
+    final dy = first[0].$2 - second[0].$2;
+    return math.sqrt(dx * dx + dy * dy);
+  }
+
+  /// Match detections to the previous frame by wrist position. The installed
+  /// MediaPipe plugin does not expose handedness or tracking IDs.
+  List<List<(double, double, double)>> _orderHandsForTracking(
+    List<List<(double, double, double)>> hands,
+  ) {
+    if (hands.length < 2) return hands;
+    final ordered = List<List<(double, double, double)>>.from(hands);
+    final previousPrimary = _smoothedPrimaryHand;
+    final previousSecondary = _smoothedSecondaryHand;
+
+    if (previousPrimary != null && previousSecondary != null) {
+      final direct =
+          _wristDistance(ordered[0], previousPrimary) +
+          _wristDistance(ordered[1], previousSecondary);
+      final crossed =
+          _wristDistance(ordered[1], previousPrimary) +
+          _wristDistance(ordered[0], previousSecondary);
+      return crossed < direct ? [ordered[1], ordered[0]] : ordered;
+    }
+
+    if (previousPrimary != null &&
+        _wristDistance(ordered[1], previousPrimary) <
+            _wristDistance(ordered[0], previousPrimary)) {
+      return [ordered[1], ordered[0]];
+    }
+
+    ordered.sort((a, b) => a[0].$1.compareTo(b[0].$1));
+    return ordered;
+  }
+
+  void _clearTemporalTrackingData() {
+    _sequenceBuffer.clear();
+    _alphaProbHistory.clear();
+    _fslProbHistory.clear();
+    _medProbHistory.clear();
+    _motionHistory.clear();
+    _smoothedPrimaryHand = null;
+    _smoothedSecondaryHand = null;
+    _lastWrist = null;
+    _lastWristTimestamp = null;
+    _motionRouteActive = false;
+    _alphaCandidate = null;
+    _alphaCandidateCount = 0;
+    _alphaEmittedLabel = null;
+    _alphaReleaseFrameCount = 0;
+    _fslCandidate = null;
+    _fslCandidateCount = 0;
+    _fslEmittedLabel = null;
+    _fslReleaseFrameCount = 0;
+    _medCandidate = null;
+    _medCandidateCount = 0;
+    _jTrajectory.clear();
+  }
+
+  void _resetTrackingState() {
+    _clearTemporalTrackingData();
+    _lastTrackedHandCount = 0;
+    _missingHandFrames = 0;
+    _restZoneFrameCount = 0;
+  }
+
   void _handleDetectedHands(List<Hand> hands) {
     if (!_isRunning) return;
 
-    if (hands.isEmpty) {
-      _landmarkStreamController.add([]);
-      _alphaCandidateCount = 0;
-      _alphaCandidate = null;
-      _smoothedPrimaryHand = null;
-      _smoothedSecondaryHand = null;
-      _fslProbHistory.clear();
-      _medProbHistory.clear();
-      if (_sequenceBuffer.isNotEmpty && _sequenceBuffer.length > 10) {
-        _sequenceBuffer.removeAt(0);
-      }
+    final now = DateTime.now();
+    if (_lastWristTimestamp != null &&
+        now.difference(_lastWristTimestamp!) >
+            const Duration(milliseconds: 250)) {
+      // Avoid blending a reacquired hand into a stale position or sequence.
+      _clearTemporalTrackingData();
+      _lastTrackedHandCount = 0;
+      _missingHandFrames = 0;
+      _restZoneFrameCount = 0;
+    }
 
-      // Natural Rest Zone: hands lowered out of camera frame
-      _restZoneFrameCount++;
-      if (_restZoneFrameCount >= _restZoneThreshold) {
-        if (!_isPaused && !_manualPaused) {
-          _isPaused = true;
-          _pauseStatusController.add(true);
+    // 1. Transform valid detections and keep left/right track order stable.
+    final transformedHands = _orderHandsForTracking(
+      hands
+          .where((hand) => hand.landmarks.length >= 21)
+          .map((hand) => hand.landmarks.map(_transformLandmark).toList())
+          .toList(),
+    );
+
+    if (transformedHands.isEmpty) {
+      _missingHandFrames++;
+      if (_missingHandFrames == _trackingGraceFrames + 1) {
+        _landmarkStreamController.add([]);
+        _clearTemporalTrackingData();
+        _lastTrackedHandCount = 0;
+      }
+      if (_missingHandFrames > _trackingGraceFrames) {
+        _restZoneFrameCount++;
+        if (_restZoneFrameCount >= _restZoneThreshold && !_manualPaused) {
+          if (!_isPaused) {
+            _isPaused = true;
+            _pauseStatusController.add(true);
+          }
         }
-        _sequenceBuffer.clear();
       }
       return;
     }
 
-    // 1. Transform raw sensor landmarks to upright screen space
-    final transformedHands = hands.map((h) {
-      return h.landmarks.map((lm) => _transformLandmark(lm)).toList();
-    }).toList();
+    _missingHandFrames = 0;
 
-    // 2. Stream 2D offsets for the live camera skeleton overlay
-    final overlayHands = transformedHands.map((h) {
-      return h.map((pt) => Offset(pt.$1, pt.$2)).toList();
-    }).toList();
-    _landmarkStreamController.add(overlayHands);
-
-    final primaryHand = transformedHands.first;
-    if (primaryHand.length < 21) return;
+    // A one/two-hand transition changes the input topology. Start a fresh
+    // temporal window instead of mixing those different inputs together.
+    if (_lastTrackedHandCount != 0 &&
+        _lastTrackedHandCount != transformedHands.length) {
+      _sequenceBuffer.clear();
+      _alphaProbHistory.clear();
+      _fslProbHistory.clear();
+      _medProbHistory.clear();
+      _motionHistory.clear();
+      _lastWrist = null;
+      _lastWristTimestamp = null;
+      _motionRouteActive = false;
+      _alphaCandidate = null;
+      _alphaCandidateCount = 0;
+      _alphaEmittedLabel = null;
+      _alphaReleaseFrameCount = 0;
+      _fslCandidate = null;
+      _fslCandidateCount = 0;
+      _fslEmittedLabel = null;
+      _fslReleaseFrameCount = 0;
+      _medCandidate = null;
+      _medCandidateCount = 0;
+    }
+    _lastTrackedHandCount = transformedHands.length;
 
     // Apply EMA smoothing to eliminate camera frame micro-jitter
-    final smoothedPrimary = _applyEmaSmoothing(primaryHand, _smoothedPrimaryHand);
+    var previousForPrimary = _smoothedPrimaryHand;
+    if (transformedHands.length == 1 &&
+        previousForPrimary != null &&
+        _smoothedSecondaryHand != null &&
+        _wristDistance(transformedHands.first, _smoothedSecondaryHand!) <
+            _wristDistance(transformedHands.first, previousForPrimary)) {
+      previousForPrimary = _smoothedSecondaryHand;
+    }
+    final smoothedPrimary = _applyEmaSmoothing(
+      transformedHands.first,
+      previousForPrimary,
+    );
     _smoothedPrimaryHand = smoothedPrimary;
     final List<(double, double, double)>? smoothedSecondary;
     if (transformedHands.length > 1 && transformedHands[1].length >= 21) {
-      smoothedSecondary = _applyEmaSmoothing(transformedHands[1], _smoothedSecondaryHand);
+      smoothedSecondary = _applyEmaSmoothing(
+        transformedHands[1],
+        _smoothedSecondaryHand,
+      );
       _smoothedSecondaryHand = smoothedSecondary;
     } else {
       _smoothedSecondaryHand = null;
@@ -388,9 +665,17 @@ class TfliteRecognitionService implements RecognitionService {
     }
     final smoothedHands = [smoothedPrimary, ?smoothedSecondary];
 
+    // Show the same filtered coordinates used for inference, reducing visual
+    // jitter in the user's live hand-tracking overlay.
+    _landmarkStreamController.add(
+      smoothedHands
+          .map((hand) => hand.map((pt) => Offset(pt.$1, pt.$2)).toList())
+          .toList(),
+    );
+
     // 3. Natural Rest Zone Check:
     // Check if hands have dropped below active signing zone (wrist y >= 0.82)
-    final bool allHandsRestingLow = transformedHands.every((hand) {
+    final bool allHandsRestingLow = smoothedHands.every((hand) {
       if (hand.isEmpty) return true;
       final wristY = hand[0].$2;
       return wristY >= 0.82;
@@ -404,14 +689,25 @@ class TfliteRecognitionService implements RecognitionService {
           _pauseStatusController.add(true);
         }
         _sequenceBuffer.clear();
+        _alphaProbHistory.clear();
         _fslProbHistory.clear();
         _medProbHistory.clear();
         _smoothedPrimaryHand = null;
         _smoothedSecondaryHand = null;
+        _motionHistory.clear();
+        _lastWrist = null;
+        _lastWristTimestamp = null;
+        _motionRouteActive = false;
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
+        _alphaEmittedLabel = null;
+        _alphaReleaseFrameCount = 0;
         _fslCandidate = null;
         _fslCandidateCount = 0;
+        _fslEmittedLabel = null;
+        _fslReleaseFrameCount = 0;
+        _medCandidate = null;
+        _medCandidateCount = 0;
       }
       return; // Skip inference while hands are resting
     } else {
@@ -430,16 +726,46 @@ class TfliteRecognitionService implements RecognitionService {
     // 4. Compute Kinetic Hand Motion
     final wrist = smoothedPrimary[0];
     double currentMotion = 0.0;
-    if (_lastWrist != null) {
+    if (_lastWrist != null && _lastWristTimestamp != null) {
       final dx = wrist.$1 - _lastWrist!.dx;
       final dy = wrist.$2 - _lastWrist!.dy;
-      currentMotion = math.sqrt(dx * dx + dy * dy);
+      final elapsedSeconds =
+          now.difference(_lastWristTimestamp!).inMicroseconds / 1000000.0;
+      if (elapsedSeconds > 0 && elapsedSeconds <= 0.25) {
+        // Normalize to a 30 fps-equivalent displacement so device frame rate
+        // does not determine whether the motion router selects alphabet or ST-GCN.
+        currentMotion = (math.sqrt(dx * dx + dy * dy) / (30 * elapsedSeconds))
+            .clamp(0.0, 0.15)
+            .toDouble();
+      } else if (elapsedSeconds > 0.25) {
+        _motionHistory.clear();
+        _sequenceBuffer.clear();
+        _fslProbHistory.clear();
+        _medProbHistory.clear();
+      }
     }
     _lastWrist = Offset(wrist.$1, wrist.$2);
+    _lastWristTimestamp = now;
     _motionHistory.add(currentMotion);
     if (_motionHistory.length > 8) _motionHistory.removeAt(0);
-    final avgMotion = _motionHistory.reduce((a, b) => a + b) / _motionHistory.length;
-    final isHandMoving = avgMotion >= 0.012;
+    final avgMotion =
+        _motionHistory.reduce((a, b) => a + b) / _motionHistory.length;
+    if (avgMotion <= 0.009) {
+      _fslReleaseFrameCount++;
+      if (_fslReleaseFrameCount >= 6) {
+        _fslEmittedLabel = null;
+        _fslCandidate = null;
+        _fslCandidateCount = 0;
+        _fslProbHistory.clear();
+      }
+    } else {
+      _fslReleaseFrameCount = 0;
+    }
+    if (avgMotion >= 0.015) {
+      _motionRouteActive = true;
+    } else if (avgMotion <= 0.009) {
+      _motionRouteActive = false;
+    }
 
     // 5. Accumulate continuous ST-GCN sequence frame buffer
     _accumulateSequenceFrame(smoothedHands);
@@ -447,18 +773,24 @@ class TfliteRecognitionService implements RecognitionService {
     // 6. Dynamic Letter 'J' Kinematic Detector:
     // In FSL, 'J' is traced dynamically in the air using an 'I' handshape (downward stroke + upward hook).
     if (_jCooldown > 0) _jCooldown--;
-    if (!_isPaused && smoothedHands.length == 1 && _mode != RecognitionMode.phrases && _mode != RecognitionMode.medical) {
+    if (!_isPaused &&
+        smoothedHands.length == 1 &&
+        _mode != RecognitionMode.phrases &&
+        _mode != RecognitionMode.medical) {
       final isI = _checkIsIHandshape(smoothedPrimary);
       final pinkyTip = smoothedPrimary[20];
       _jTrajectory.add((pinkyTip.$1, pinkyTip.$2, isI));
       if (_jTrajectory.length > 30) _jTrajectory.removeAt(0);
 
-      if (_jCooldown == 0 && _detectJGesture()) {
+      if (_jCooldown == 0 && _alphaEmittedLabel != 'J' && _detectJGesture()) {
         _jCooldown = 24; // Debounce ~0.8s
         _jTrajectory.clear();
         _sequenceBuffer.clear();
+        _alphaProbHistory.clear();
         _alphaCandidate = 'J';
         _alphaCandidateCount = 2;
+        _alphaEmittedLabel = 'J';
+        _alphaReleaseFrameCount = 0;
         final now = DateTime.now();
         _lastEmittedLabel = 'J';
         _lastEmittedTime = now;
@@ -488,16 +820,21 @@ class TfliteRecognitionService implements RecognitionService {
       // FSL Alphabet fingerspelling is strictly 1-handed.
       // If 2 hands are raised in active signing space, route to ST-GCN phrases.
       if (smoothedHands.length >= 2) {
+        _alphaProbHistory.clear();
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
+        _alphaReleaseFrameCount = 0;
         _evaluateConversationalSign(avgMotion);
-      } else if (isHandMoving) {
+      } else if (_motionRouteActive) {
         // Dynamic single-hand movement: route to ST-GCN conversational phrases
+        _alphaProbHistory.clear();
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
+        _alphaReleaseFrameCount = 0;
         _evaluateConversationalSign(avgMotion);
       } else {
         // Hand held steady: evaluate Alphabet Fingerspelling (A-Z)
+        _fslProbHistory.clear();
         _fslCandidate = null;
         _fslCandidateCount = 0;
         _evaluateAlphabet(smoothedPrimary);
@@ -521,7 +858,8 @@ class TfliteRecognitionService implements RecognitionService {
 
     // In upright screen coordinates (0.0 top, 1.0 bottom):
     // Pinky extended: tip is higher on screen (lower y) than PIP and MCP
-    final pinkyExtended = (pinkyTip.$2 < pinkyPip.$2) && (pinkyTip.$2 < pinkyMcp.$2);
+    final pinkyExtended =
+        (pinkyTip.$2 < pinkyPip.$2) && (pinkyTip.$2 < pinkyMcp.$2);
 
     // Other three fingers curled down:
     final indexCurled = indexTip.$2 > (indexPip.$2 - 0.03);
@@ -529,13 +867,16 @@ class TfliteRecognitionService implements RecognitionService {
     final ringCurled = ringTip.$2 > (ringPip.$2 - 0.03);
 
     // Pinky tip noticeably higher on screen than curled fingertips
-    final pinkyDominant = (
-      pinkyTip.$2 < indexTip.$2 - 0.035 &&
-      pinkyTip.$2 < middleTip.$2 - 0.035 &&
-      pinkyTip.$2 < ringTip.$2 - 0.035
-    );
+    final pinkyDominant =
+        (pinkyTip.$2 < indexTip.$2 - 0.035 &&
+        pinkyTip.$2 < middleTip.$2 - 0.035 &&
+        pinkyTip.$2 < ringTip.$2 - 0.035);
 
-    return pinkyExtended && indexCurled && middleCurled && ringCurled && pinkyDominant;
+    return pinkyExtended &&
+        indexCurled &&
+        middleCurled &&
+        ringCurled &&
+        pinkyDominant;
   }
 
   /// Kinematic recognizer for the letter 'J'
@@ -635,7 +976,24 @@ class TfliteRecognitionService implements RecognitionService {
 
     try {
       _alphabetInterpreter!.run(input, output);
-      final probs = output[0];
+      final rawProbs = output[0];
+      if (rawProbs.length != _alphabetLabels.length) {
+        debugPrint(
+          '[TfliteRecognitionService] Alphabet model output count does not match its labels.',
+        );
+        return;
+      }
+
+      _alphaProbHistory.add(List<double>.from(rawProbs));
+      if (_alphaProbHistory.length > _alphaProbHistorySize) {
+        _alphaProbHistory.removeAt(0);
+      }
+      final probs = List<double>.filled(_alphabetLabels.length, 0.0);
+      for (final frameProbs in _alphaProbHistory) {
+        for (var i = 0; i < frameProbs.length; i++) {
+          probs[i] += frameProbs[i] / _alphaProbHistory.length;
+        }
+      }
 
       int top1Idx = 0;
       double top1Prob = probs[0];
@@ -651,9 +1009,12 @@ class TfliteRecognitionService implements RecognitionService {
         }
       }
 
-      // Calibrated gating: confidence >= 0.42 and margin >= 0.03
-      final margin = top1Prob - top2Prob;
-      if (top1Prob >= 0.42 && margin >= 0.03 && top1Idx < _alphabetLabels.length) {
+      // Match Chapter 3's two-tier confidence gate before committing any sign.
+      // A brief low-confidence transition also lets users deliberately repeat
+      // the same static letter without auto-repeating held signs.
+      if (_passesPaperConfidenceGate(top1Prob, top2Prob) &&
+          top1Idx < _alphabetLabels.length) {
+        _alphaReleaseFrameCount = 0;
         final letter = _alphabetLabels[top1Idx];
         if (letter == _alphaCandidate) {
           _alphaCandidateCount++;
@@ -662,28 +1023,29 @@ class TfliteRecognitionService implements RecognitionService {
           _alphaCandidateCount = 1;
         }
 
-        // 2 consecutive stable frames for snappy, responsive letters
-        if (_alphaCandidateCount >= 2) {
+        // Five stable frames filter brief class flicker while keeping input
+        // responsive at normal camera frame rates.
+        if (_alphaCandidateCount >= 5 && letter != _alphaEmittedLabel) {
           final now = DateTime.now();
-          final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
-          final isSameLetter = (letter == _lastEmittedLabel);
-          final requiredDelay = isSameLetter ? 1200 : 500;
-
-          if (elapsed > requiredDelay) {
-            _lastEmittedLabel = letter;
-            _lastEmittedTime = now;
-            _predictionsController.add(
-              SignResult(
-                label: letter,
-                confidence: top1Prob,
-                timestamp: now,
-                source: 'fsl_alphabet_model',
-              ),
-            );
-          }
+          _alphaEmittedLabel = letter;
+          _lastEmittedLabel = letter;
+          _lastEmittedTime = now;
+          _predictionsController.add(
+            SignResult(
+              label: letter,
+              confidence: top1Prob,
+              timestamp: now,
+              source: 'fsl_alphabet_model',
+            ),
+          );
         }
       } else {
-        _alphaCandidateCount = math.max(0, _alphaCandidateCount - 1);
+        _alphaCandidate = null;
+        _alphaCandidateCount = 0;
+        _alphaReleaseFrameCount++;
+        if (_alphaReleaseFrameCount >= 8) {
+          _alphaEmittedLabel = null;
+        }
       }
     } catch (e) {
       debugPrint('[TfliteRecognitionService] Alphabet inference error: $e');
@@ -704,11 +1066,7 @@ class TfliteRecognitionService implements RecognitionService {
 
     // Normalizes point relative to mid-shoulder (0.50, 0.65) and shoulder width (0.22)
     List<double> normJoint((double, double, double) pt) {
-      return [
-        (pt.$1 - 0.50) / 0.22,
-        (pt.$2 - 0.65) / 0.22,
-        pt.$3 / 0.22,
-      ];
+      return [(pt.$1 - 0.50) / 0.22, (pt.$2 - 0.65) / 0.22, pt.$3 / 0.22];
     }
 
     final worldHands = hands.map((h) => h.map(toWorld).toList()).toList();
@@ -719,8 +1077,10 @@ class TfliteRecognitionService implements RecognitionService {
     if (worldHands.length >= 2) {
       final hand0 = worldHands[0];
       final hand1 = worldHands[1];
-      final meanX0 = hand0.map((p) => p.$1).reduce((a, b) => a + b) / hand0.length;
-      final meanX1 = hand1.map((p) => p.$1).reduce((a, b) => a + b) / hand1.length;
+      final meanX0 =
+          hand0.map((p) => p.$1).reduce((a, b) => a + b) / hand0.length;
+      final meanX1 =
+          hand1.map((p) => p.$1).reduce((a, b) => a + b) / hand1.length;
 
       // In unmirrored world space, signer's right is on image left (lower x), left is on image right (higher x)
       if (meanX0 < meanX1) {
@@ -748,11 +1108,11 @@ class TfliteRecognitionService implements RecognitionService {
     }
 
     // Synthetic canonical pose landmarks in slots 0..32 matching ST-GCN graph topology:
-    currentJoints[0] = [0.0, -0.95, -0.1];  // Head / Nose
-    currentJoints[11] = [0.50, 0.0, 0.0];   // Left Shoulder
-    currentJoints[12] = [-0.50, 0.0, 0.0];  // Right Shoulder
-    currentJoints[23] = [0.40, 1.8, 0.0];   // Left Hip
-    currentJoints[24] = [-0.40, 1.8, 0.0];  // Right Hip
+    currentJoints[0] = [0.0, -0.95, -0.1]; // Head / Nose
+    currentJoints[11] = [0.50, 0.0, 0.0]; // Left Shoulder
+    currentJoints[12] = [-0.50, 0.0, 0.0]; // Right Shoulder
+    currentJoints[23] = [0.40, 1.8, 0.0]; // Left Hip
+    currentJoints[24] = [-0.40, 1.8, 0.0]; // Right Hip
 
     // Connect Right arm chain (Right shoulder 12 -> Right elbow 14 -> Right wrist 16 -> Right hand 54)
     currentJoints[16] = List<double>.from(currentJoints[54]);
@@ -788,7 +1148,10 @@ class TfliteRecognitionService implements RecognitionService {
     // Require at least 24 frames of continuous gesture buffer (~0.8s) and active kinetic movement
     if (_sequenceBuffer.length >= 24 && avgMotion >= 0.005) {
       try {
-        final seqInput = _resampleSequence(_sequenceBuffer, _targetSequenceLength);
+        final seqInput = _resampleSequence(
+          _sequenceBuffer,
+          _targetSequenceLength,
+        );
         final input = [seqInput];
         final output = [List<double>.filled(_fslLabels.length, 0.0)];
 
@@ -822,8 +1185,8 @@ class TfliteRecognitionService implements RecognitionService {
           }
         }
 
-        final margin = top1Prob - top2Prob;
-        if ((top1Prob >= 0.55 || (top1Prob >= 0.44 && margin >= 0.05)) && top1Idx < _fslLabels.length) {
+        if (_passesPaperConfidenceGate(top1Prob, top2Prob) &&
+            top1Idx < _fslLabels.length) {
           final rawWord = _fslLabels[top1Idx];
           final displayWord = _formatFslPhrase(rawWord);
 
@@ -834,15 +1197,17 @@ class TfliteRecognitionService implements RecognitionService {
             _fslCandidateCount = 1;
           }
 
-          // Require 2 consecutive evaluations for responsive and stable recognition
-          if (_fslCandidateCount >= 2) {
+          // Commit only after the same phrase remains the leading class for
+          // several evaluations, preventing transition frames from flashing
+          // different words into the transcript.
+          if (_fslCandidateCount >= 4 && displayWord != _fslEmittedLabel) {
             final now = DateTime.now();
             final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
-            final isSameWord = (displayWord == _lastEmittedLabel);
-            final requiredDelay = isSameWord ? 2200 : 900;
+            final requiredDelay = 700;
 
             if (elapsed > requiredDelay) {
               _lastEmittedLabel = displayWord;
+              _fslEmittedLabel = displayWord;
               _lastEmittedTime = now;
               _predictionsController.add(
                 SignResult(
@@ -855,7 +1220,8 @@ class TfliteRecognitionService implements RecognitionService {
             }
           }
         } else {
-          _fslCandidateCount = math.max(0, _fslCandidateCount - 1);
+          _fslCandidate = null;
+          _fslCandidateCount = 0;
         }
       } catch (e) {
         debugPrint('[TfliteRecognitionService] ST-GCN inference error: $e');
@@ -903,11 +1269,18 @@ class TfliteRecognitionService implements RecognitionService {
 
   /// Evaluates 60-frame ST-GCN sequence using dedicated 25-class Medical FSL model
   void _evaluateMedicalSign(double avgMotion) {
-    if (_medicalModelInterpreter == null || _medicalLabels.isEmpty || _isPaused) return;
+    if (_medicalModelInterpreter == null ||
+        _medicalLabels.isEmpty ||
+        _isPaused) {
+      return;
+    }
 
     if (_sequenceBuffer.length >= 24 && avgMotion >= 0.005) {
       try {
-        final seqInput = _resampleSequence(_sequenceBuffer, _targetSequenceLength);
+        final seqInput = _resampleSequence(
+          _sequenceBuffer,
+          _targetSequenceLength,
+        );
         final input = [seqInput];
         final output = [List<double>.filled(_medicalLabels.length, 0.0)];
 
@@ -941,9 +1314,21 @@ class TfliteRecognitionService implements RecognitionService {
           }
         }
 
-        final margin = top1Prob - top2Prob;
-        if ((top1Prob >= 0.55 || (top1Prob >= 0.44 && margin >= 0.05)) && top1Idx < _medicalLabels.length) {
+        if (_passesPaperConfidenceGate(top1Prob, top2Prob) &&
+            top1Idx < _medicalLabels.length) {
           final rawWord = _medicalLabels[top1Idx];
+          // The training metadata currently names outputs 18–25 with
+          // placeholders. Keep those model outputs from being presented as
+          // if they were real FSL medical signs until verified labels exist.
+          if (RegExp(r'^Medical_\d+$').hasMatch(rawWord)) {
+            debugPrint(
+              '[TfliteRecognitionService] Medical model predicted an unmapped class; '
+              'suppressing output until its FSL label is verified.',
+            );
+            _medCandidate = null;
+            _medCandidateCount = 0;
+            return;
+          }
           final displayWord = _formatMedicalPhrase(rawWord);
 
           if (displayWord == _medCandidate) {
@@ -953,7 +1338,7 @@ class TfliteRecognitionService implements RecognitionService {
             _medCandidateCount = 1;
           }
 
-          if (_medCandidateCount >= 2) {
+          if (_medCandidateCount >= 4) {
             final now = DateTime.now();
             final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
             final isSameWord = (displayWord == _lastEmittedLabel);
@@ -973,10 +1358,13 @@ class TfliteRecognitionService implements RecognitionService {
             }
           }
         } else {
-          _medCandidateCount = math.max(0, _medCandidateCount - 1);
+          _medCandidate = null;
+          _medCandidateCount = 0;
         }
       } catch (e) {
-        debugPrint('[TfliteRecognitionService] Medical ST-GCN inference error: $e');
+        debugPrint(
+          '[TfliteRecognitionService] Medical ST-GCN inference error: $e',
+        );
       }
     }
   }
@@ -1024,13 +1412,18 @@ class TfliteRecognitionService implements RecognitionService {
   }
 
   /// Linearly resamples buffer to exact 60-frame ST-GCN tensor input with true linear interpolation
-  List<List<List<double>>> _resampleSequence(List<List<List<double>>> sequence, int targetLength) {
+  List<List<List<double>>> _resampleSequence(
+    List<List<List<double>>> sequence,
+    int targetLength,
+  ) {
     final n = sequence.length;
     if (n == targetLength) return sequence;
     if (n <= 1) {
       return List.generate(
         targetLength,
-        (_) => sequence.isEmpty ? List.generate(_totalJoints, (_) => [0.0, 0.0, 0.0]) : sequence.first,
+        (_) => sequence.isEmpty
+            ? List.generate(_totalJoints, (_) => [0.0, 0.0, 0.0])
+            : sequence.first,
       );
     }
     final resampled = <List<List<double>>>[];

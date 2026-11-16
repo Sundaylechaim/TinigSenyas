@@ -30,11 +30,7 @@ class ModelFileEntry {
     );
   }
 
-  Map<String, dynamic> toJson() => {
-    'name': name,
-    'url': url,
-    'sha256': sha256,
-  };
+  Map<String, dynamic> toJson() => {'name': name, 'url': url, 'sha256': sha256};
 }
 
 class ModelUpdateInfo {
@@ -90,6 +86,7 @@ class ModelUpdateInfo {
 }
 
 class ModelUpdater {
+  static const currentAppVersion = '1.2.4';
   static const defaultRemoteManifestUrl =
       'https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/manifest.json';
   static const _manifestAsset = 'assets/model/manifest.json';
@@ -100,16 +97,18 @@ class ModelUpdater {
   final String remoteManifestUrl;
 
   ModelUpdater({Dio? dio, String? remoteManifestUrl})
-      : remoteManifestUrl = (remoteManifestUrl != null && remoteManifestUrl.trim().isNotEmpty)
-            ? remoteManifestUrl.trim()
-            : defaultRemoteManifestUrl,
-        _dio = dio ??
-            Dio(
-              BaseOptions(
-                connectTimeout: const Duration(seconds: 15),
-                receiveTimeout: const Duration(minutes: 5),
-              ),
-            );
+    : remoteManifestUrl =
+          (remoteManifestUrl != null && remoteManifestUrl.trim().isNotEmpty)
+          ? remoteManifestUrl.trim()
+          : defaultRemoteManifestUrl,
+      _dio =
+          dio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(seconds: 15),
+              receiveTimeout: const Duration(minutes: 5),
+            ),
+          );
 
   /// Gets the currently installed model version (from SharedPreferences or bundled asset)
   Future<String> getInstalledVersion() async {
@@ -127,7 +126,10 @@ class ModelUpdater {
   }
 
   List<ModelFileEntry> _parseModelList(
-      Map<String, dynamic> data, String fallbackUrl, String fallbackSha256) {
+    Map<String, dynamic> data,
+    String fallbackUrl,
+    String fallbackSha256,
+  ) {
     final list = <ModelFileEntry>[];
     if (data['models'] is List) {
       for (final item in data['models'] as List) {
@@ -140,21 +142,39 @@ class ModelUpdater {
       }
     }
     if (list.isEmpty && fallbackUrl.isNotEmpty) {
-      list.add(ModelFileEntry(
-        name: 'fsl_model.tflite',
-        url: fallbackUrl,
-        sha256: fallbackSha256,
-      ));
+      list.add(
+        ModelFileEntry(
+          name: 'fsl_model.tflite',
+          url: fallbackUrl,
+          sha256: fallbackSha256,
+        ),
+      );
     }
     return list;
+  }
+
+  bool _isAllowedDownloadUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) return false;
+    if (uri.scheme.toLowerCase() == 'https') return true;
+    final host = uri.host.toLowerCase();
+    return uri.scheme.toLowerCase() == 'http' &&
+        (host == 'localhost' || host == '127.0.0.1' || host == '10.0.2.2');
+  }
+
+  bool _isSafeModelEntry(ModelFileEntry entry) {
+    return RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]*$').hasMatch(entry.name) &&
+        _isAllowedDownloadUrl(entry.url) &&
+        RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(entry.sha256.trim());
   }
 
   /// Checks for model OTA updates online
   Future<ModelUpdateInfo> checkForUpdates() async {
     final currentVersion = await getInstalledVersion();
 
-    // 1. Try remote manifest
-    if (remoteManifestUrl.isNotEmpty) {
+    // 1. Try remote manifest (require HTTPS unless pointing to local dev loopback)
+    if (remoteManifestUrl.isNotEmpty &&
+        _isAllowedDownloadUrl(remoteManifestUrl)) {
       try {
         final response = await _dio.get<dynamic>(remoteManifestUrl);
         final rawData = response.data;
@@ -168,9 +188,13 @@ class ModelUpdater {
           final minApp = (data['min_app_version'] as String?) ?? '1.0.0';
           final notes = (data['notes'] as String?) ?? '';
           final models = _parseModelList(data, downloadUrl, sha256Hash);
+          final appCompatible = !_isVersionNewer(minApp, currentAppVersion);
 
-          final hasUpdate = _isVersionNewer(remoteVer, currentVersion) &&
-              (downloadUrl.isNotEmpty || models.isNotEmpty);
+          final hasUpdate =
+              appCompatible &&
+              _isVersionNewer(remoteVer, currentVersion) &&
+              models.isNotEmpty &&
+              models.every(_isSafeModelEntry);
 
           return ModelUpdateInfo(
             version: remoteVer,
@@ -201,8 +225,11 @@ class ModelUpdater {
       final notes = (data['notes'] as String?) ?? '';
       final models = _parseModelList(data, url, sha256Hash);
 
-      final hasUpdate = _isVersionNewer(manifestVersion, currentVersion) &&
-          (url.isNotEmpty || models.isNotEmpty);
+      final hasUpdate =
+          !_isVersionNewer(minApp, currentAppVersion) &&
+          _isVersionNewer(manifestVersion, currentVersion) &&
+          models.isNotEmpty &&
+          models.every(_isSafeModelEntry);
 
       return ModelUpdateInfo(
         version: hasUpdate ? manifestVersion : currentVersion,
@@ -234,19 +261,22 @@ class ModelUpdater {
     final targetFiles = info.models.isNotEmpty
         ? info.models
         : (info.url.isNotEmpty
-            ? [
-                ModelFileEntry(
-                  name: 'fsl_model.tflite',
-                  url: info.url,
-                  sha256: info.sha256,
-                )
-              ]
-            : <ModelFileEntry>[]);
+              ? [
+                  ModelFileEntry(
+                    name: 'fsl_model.tflite',
+                    url: info.url,
+                    sha256: info.sha256,
+                  ),
+                ]
+              : <ModelFileEntry>[]);
 
-    if (targetFiles.isEmpty) {
+    if (targetFiles.isEmpty ||
+        targetFiles.any((entry) => !_isSafeModelEntry(entry)) ||
+        targetFiles.map((entry) => entry.name).toSet().length !=
+            targetFiles.length) {
       yield info.copyWith(
         status: UpdateStatus.error,
-        errorMessage: 'No valid download URL provided in update manifest.',
+        errorMessage: 'The model update manifest is invalid or incomplete.',
       );
       return;
     }
@@ -260,29 +290,36 @@ class ModelUpdater {
         await modelsDir.create(recursive: true);
       }
 
+      final stagedFiles = <String, File>{};
+      final backupFiles = <String, File>{};
+      final installedFiles = <String>[];
       final totalFiles = targetFiles.length;
 
       for (int i = 0; i < totalFiles; i++) {
         final entry = targetFiles[i];
-        final tempPath = p.join(modelsDir.path, 'temp_${entry.name}');
-        final finalPath = p.join(modelsDir.path, entry.name);
+        final tempPath = p.join(modelsDir.path, '.${entry.name}.download');
+        final tempFile = File(tempPath);
+        if (await tempFile.exists()) await tempFile.delete();
 
         final progressController = StreamController<double>();
 
         unawaited(
-          _dio.download(
-            entry.url,
-            tempPath,
-            onReceiveProgress: (received, total) {
-              if (total > 0) {
-                final fileProg = received / total;
-                final overall = (i + fileProg) / totalFiles;
-                progressController.add(overall.clamp(0.0, 0.99));
-              }
-            },
-          ).then((_) => progressController.close()).catchError((err) {
-            progressController.addError(err);
-          }),
+          _dio
+              .download(
+                entry.url,
+                tempPath,
+                onReceiveProgress: (received, total) {
+                  if (total > 0) {
+                    final fileProg = received / total;
+                    final overall = (i + fileProg) / totalFiles;
+                    progressController.add(overall.clamp(0.0, 0.99));
+                  }
+                },
+              )
+              .then((_) => progressController.close())
+              .catchError((err) {
+                progressController.addError(err);
+              }),
         );
 
         await for (final prog in progressController.stream) {
@@ -290,8 +327,7 @@ class ModelUpdater {
         }
 
         // Verify file exists
-        final downloadedFile = File(tempPath);
-        if (!await downloadedFile.exists()) {
+        if (!await tempFile.exists()) {
           yield info.copyWith(
             status: UpdateStatus.error,
             errorMessage: 'Download incomplete for ${entry.name}.',
@@ -299,26 +335,51 @@ class ModelUpdater {
           return;
         }
 
-        // Verify SHA256 if provided
-        if (entry.sha256.isNotEmpty) {
-          final bytes = await downloadedFile.readAsBytes();
-          final digest = sha256.convert(bytes).toString();
-          if (digest.toLowerCase() != entry.sha256.toLowerCase()) {
-            await downloadedFile.delete();
-            yield info.copyWith(
-              status: UpdateStatus.error,
-              errorMessage: 'Checksum verification failed for ${entry.name}.',
-            );
-            return;
-          }
+        // Always verify SHA-256 checksum before installing over existing model
+        final digest = (await sha256.bind(tempFile.openRead()).first)
+            .toString();
+        if (digest.toLowerCase() != entry.sha256.trim().toLowerCase()) {
+          await tempFile.delete();
+          yield info.copyWith(
+            status: UpdateStatus.error,
+            errorMessage: 'Checksum verification failed for ${entry.name}.',
+          );
+          return;
         }
 
-        // Replace destination file atomically
-        final finalFile = File(finalPath);
-        if (await finalFile.exists()) {
-          await finalFile.delete();
+        stagedFiles[entry.name] = tempFile;
+      }
+
+      // Verify the complete model set before replacing any installed model.
+      try {
+        for (final entry in targetFiles) {
+          final finalFile = File(p.join(modelsDir.path, entry.name));
+          if (await finalFile.exists()) {
+            final backup = File(
+              p.join(modelsDir.path, '.${entry.name}.backup'),
+            );
+            if (await backup.exists()) await backup.delete();
+            await finalFile.rename(backup.path);
+            backupFiles[entry.name] = backup;
+          }
+          await stagedFiles[entry.name]!.rename(finalFile.path);
+          installedFiles.add(entry.name);
         }
-        await downloadedFile.rename(finalPath);
+      } catch (_) {
+        for (final name in installedFiles.reversed) {
+          final installed = File(p.join(modelsDir.path, name));
+          if (await installed.exists()) await installed.delete();
+        }
+        for (final entry in backupFiles.entries) {
+          if (await entry.value.exists()) {
+            await entry.value.rename(p.join(modelsDir.path, entry.key));
+          }
+        }
+        rethrow;
+      }
+
+      for (final backup in backupFiles.values) {
+        if (await backup.exists()) await backup.delete();
       }
 
       // Save new version

@@ -9,10 +9,10 @@ import 'speech_to_text_screen.dart';
 
 /// Complementary palette from user reference:
 /// Sun Golden Yellow (#FFC801) and Electric Royal Blue (#0138FF)
-const Color _kAppBlue = Color(0xFF0138FF);
-const Color _kAppBlueDark = Color(0xFF002BB5);
-const Color _kAppYellow = Color(0xFFFFC801);
-const Color _kAppYellowDark = Color(0xFFE5B400);
+const Color _kAppBlue = Color(0xFF2D5FB8);
+const Color _kAppBlueDark = Color(0xFF1E3A8A);
+const Color _kAppYellow = Color(0xFFF4C95D);
+const Color _kAppYellowDark = Color(0xFF9A6700);
 
 class DemoPhrase {
   final String tagalog;
@@ -43,31 +43,36 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
     DemoPhrase(
       tagalog: 'Kamusta ka?',
       english: 'How are you?',
-      fsl: 'Hawakan ang dibdib at dahan-dahang itaas ang kamay na may kasamang ngiti.',
+      fsl:
+          'Hawakan ang dibdib at dahan-dahang itaas ang kamay na may kasamang ngiti.',
       icon: Icons.waving_hand_rounded,
     ),
     DemoPhrase(
       tagalog: 'Salamat!',
       english: 'Thank you!',
-      fsl: 'Ipatong ang mga daliri ng kanang kamay sa labi at iunat ito pasulong.',
+      fsl:
+          'Ipatong ang mga daliri ng kanang kamay sa labi at iunat ito pasulong.',
       icon: Icons.volunteer_activism_rounded,
     ),
     DemoPhrase(
       tagalog: 'Mahal kita',
       english: 'I love you',
-      fsl: 'I-angat ang hinlalaki, hintuturo, at kalingkingan nang magkasabay (ILY sign).',
+      fsl:
+          'I-angat ang hinlalaki, hintuturo, at kalingkingan nang magkasabay (ILY sign).',
       icon: Icons.favorite_rounded,
     ),
     DemoPhrase(
       tagalog: 'Tulong po',
       english: 'Need help',
-      fsl: 'Ipatong ang nakasarang kamao na may hinlalaking nakataas sa kabilang palad.',
+      fsl:
+          'Ipatong ang nakasarang kamao na may hinlalaking nakataas sa kabilang palad.',
       icon: Icons.help_outline_rounded,
     ),
     DemoPhrase(
       tagalog: 'Magandang araw',
       english: 'Good day',
-      fsl: 'Ilagay ang kamay sa bibig at iunat pasulong (salamat), sabay iunat ang palad pataas.',
+      fsl:
+          'Ilagay ang kamay sa bibig at iunat pasulong (salamat), sabay iunat ang palad pataas.',
       icon: Icons.wb_sunny_rounded,
     ),
   ];
@@ -83,15 +88,15 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
   }
 
   void _openSignToText(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SignToTextScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const SignToTextScreen()));
   }
 
   void _openSpeechToText(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SpeechToTextScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const SpeechToTextScreen()));
   }
 
   void _adjustTextScale(BuildContext context, double delta) {
@@ -111,9 +116,13 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
     // Mobile background palette
     final bgColor = isDark ? const Color(0xFF0C1220) : const Color(0xFFF6F8FC);
     final cardBg = isDark ? const Color(0xFF141F36) : Colors.white;
-    final borderColor = isDark ? const Color(0xFF223253) : const Color(0xFFE2E8F0);
+    final borderColor = isDark
+        ? const Color(0xFF223253)
+        : const Color(0xFFE2E8F0);
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final subtextColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final subtextColor = isDark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -352,7 +361,11 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
               color: _kAppBlue.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(Icons.text_fields_rounded, color: _kAppBlue, size: 18),
+            child: const Icon(
+              Icons.text_fields_rounded,
+              color: _kAppBlue,
+              size: 18,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -362,13 +375,18 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
               children: [
                 Text(
                   _isTagalog ? 'Laki ng Teksto' : 'Text Size Scale',
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
                 ),
                 Text(
                   '${(textScale * 100).toInt()}% • ${_isTagalog ? 'Madaling basahin' : 'Easy reading'}',
                   style: TextStyle(
                     fontSize: 11,
-                    color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                    color: isDark
+                        ? const Color(0xFF94A3B8)
+                        : const Color(0xFF64748B),
                   ),
                 ),
               ],
@@ -380,7 +398,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               borderRadius: BorderRadius.circular(8),
-              onTap: textScale > 0.8 ? () => _adjustTextScale(context, -0.1) : null,
+              onTap: textScale > 0.8
+                  ? () => _adjustTextScale(context, -0.1)
+                  : null,
               child: const Padding(
                 padding: EdgeInsets.all(7),
                 child: Icon(Icons.remove_rounded, size: 18),
@@ -394,7 +414,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               borderRadius: BorderRadius.circular(8),
-              onTap: textScale < 1.4 ? () => _adjustTextScale(context, 0.1) : null,
+              onTap: textScale < 1.4
+                  ? () => _adjustTextScale(context, 0.1)
+                  : null,
               child: const Padding(
                 padding: EdgeInsets.all(7),
                 child: Icon(Icons.add_rounded, size: 18),
@@ -450,10 +472,16 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.auto_awesome_rounded, color: Color(0xFF111827), size: 13),
+                const Icon(
+                  Icons.auto_awesome_rounded,
+                  color: Color(0xFF111827),
+                  size: 13,
+                ),
                 const SizedBox(width: 5),
                 Text(
-                  _isTagalog ? 'KOMUNIKASYON PARA SA LAHAT' : 'INCLUSIVE COMMUNICATION',
+                  _isTagalog
+                      ? 'KOMUNIKASYON PARA SA LAHAT'
+                      : 'INCLUSIVE COMMUNICATION',
                   style: const TextStyle(
                     color: Color(0xFF111827),
                     fontWeight: FontWeight.w900,
@@ -500,9 +528,7 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.2),
-              ),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -522,7 +548,11 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                     shape: BoxShape.circle,
                   ),
                   child: const Center(
-                    child: Icon(Icons.sync_alt_rounded, color: Color(0xFF111827), size: 18),
+                    child: Icon(
+                      Icons.sync_alt_rounded,
+                      color: Color(0xFF111827),
+                      size: 18,
+                    ),
                   ),
                 ),
                 _buildHeroFeatureItem(
@@ -645,13 +675,18 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                           Row(
                             children: [
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
                                 decoration: BoxDecoration(
                                   color: _kAppBlue.withValues(alpha: 0.12),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  _isTagalog ? 'PARA SA NAKIKIPAG-SENYAS' : 'FOR SIGNERS',
+                                  _isTagalog
+                                      ? 'PARA SA NAKIKIPAG-SENYAS'
+                                      : 'FOR SIGNERS',
                                   style: const TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w800,
@@ -664,7 +699,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            _isTagalog ? 'Senyas ➔ Boses at Teksto' : 'Sign ➔ Voice & Text',
+                            _isTagalog
+                                ? 'Senyas ➔ Boses at Teksto'
+                                : 'Sign ➔ Voice & Text',
                             style: const TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.w800,
@@ -682,7 +719,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                       : 'Point camera at hand gestures. On-device AI recognizes Filipino Sign Language and speaks it aloud in real-time.',
                   style: TextStyle(
                     fontSize: 13,
-                    color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                    color: isDark
+                        ? const Color(0xFF94A3B8)
+                        : const Color(0xFF475569),
                     height: 1.35,
                   ),
                 ),
@@ -703,8 +742,13 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                     ),
                     icon: const Icon(Icons.camera_alt_rounded, size: 20),
                     label: Text(
-                      _isTagalog ? 'Buksan ang Senyas Kamera' : 'Open Sign Camera',
-                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                      _isTagalog
+                          ? 'Buksan ang Senyas Kamera'
+                          : 'Open Sign Camera',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                      ),
                     ),
                     onPressed: () => _openSignToText(context),
                   ),
@@ -780,17 +824,24 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                           Row(
                             children: [
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
                                 decoration: BoxDecoration(
                                   color: _kAppYellow.withValues(alpha: 0.22),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  _isTagalog ? 'PARA SA NAGSASALITA' : 'FOR SPEAKERS',
+                                  _isTagalog
+                                      ? 'PARA SA NAGSASALITA'
+                                      : 'FOR SPEAKERS',
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w900,
-                                    color: isDark ? _kAppYellow : const Color(0xFFB45309),
+                                    color: isDark
+                                        ? _kAppYellow
+                                        : const Color(0xFFB45309),
                                     letterSpacing: 0.4,
                                   ),
                                 ),
@@ -799,7 +850,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            _isTagalog ? 'Boses ➔ Malalaking Letra' : 'Speech ➔ Live Captions',
+                            _isTagalog
+                                ? 'Boses ➔ Malalaking Letra'
+                                : 'Speech ➔ Live Captions',
                             style: const TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.w800,
@@ -817,7 +870,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                       : 'Speak into your phone. Subtitles appear in high-contrast large font for deaf friends and family to read instantly.',
                   style: TextStyle(
                     fontSize: 13,
-                    color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                    color: isDark
+                        ? const Color(0xFF94A3B8)
+                        : const Color(0xFF475569),
                     height: 1.35,
                   ),
                 ),
@@ -838,8 +893,13 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                     ),
                     icon: const Icon(Icons.mic_rounded, size: 20),
                     label: Text(
-                      _isTagalog ? 'Magsimulang Magsalita' : 'Start Speech to Text',
-                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+                      _isTagalog
+                          ? 'Magsimulang Magsalita'
+                          : 'Start Speech to Text',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14,
+                      ),
                     ),
                     onPressed: () => _openSpeechToText(context),
                   ),
@@ -879,7 +939,11 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                   color: _kAppBlue.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.menu_book_rounded, color: _kAppBlue, size: 18),
+                child: const Icon(
+                  Icons.menu_book_rounded,
+                  color: _kAppBlue,
+                  size: 18,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -887,14 +951,23 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _isTagalog ? 'Mabilisang Gabay sa Senyas' : 'Quick Sign Reference',
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                      _isTagalog
+                          ? 'Mabilisang Gabay sa Senyas'
+                          : 'Quick Sign Reference',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     Text(
-                      _isTagalog ? 'Pindutin upang makita ang paraan' : 'Tap to see gesture guide',
+                      _isTagalog
+                          ? 'Pindutin upang makita ang paraan'
+                          : 'Tap to see gesture guide',
                       style: TextStyle(
                         fontSize: 11,
-                        color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                        color: isDark
+                            ? const Color(0xFF94A3B8)
+                            : const Color(0xFF64748B),
                       ),
                     ),
                   ],
@@ -920,16 +993,23 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
                   decoration: BoxDecoration(
                     color: isSelected
                         ? _kAppBlue
-                        : (isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9)),
+                        : (isDark
+                              ? const Color(0xFF1E293B)
+                              : const Color(0xFFF1F5F9)),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: isSelected
                           ? _kAppBlue
-                          : (isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1)),
+                          : (isDark
+                                ? const Color(0xFF334155)
+                                : const Color(0xFFCBD5E1)),
                     ),
                   ),
                   child: Row(
@@ -940,17 +1020,23 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                         size: 14,
                         color: isSelected
                             ? _kAppYellow
-                            : (isDark ? Colors.white70 : const Color(0xFF475569)),
+                            : (isDark
+                                  ? Colors.white70
+                                  : const Color(0xFF475569)),
                       ),
                       const SizedBox(width: 6),
                       Text(
                         p.tagalog,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                          fontWeight: isSelected
+                              ? FontWeight.w800
+                              : FontWeight.w600,
                           color: isSelected
                               ? Colors.white
-                              : (isDark ? Colors.white : const Color(0xFF1E293B)),
+                              : (isDark
+                                    ? Colors.white
+                                    : const Color(0xFF1E293B)),
                         ),
                       ),
                     ],
@@ -967,9 +1053,7 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
             decoration: BoxDecoration(
               color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: _kAppBlue.withValues(alpha: 0.15),
-              ),
+              border: Border.all(color: _kAppBlue.withValues(alpha: 0.15)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1002,7 +1086,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                             style: TextStyle(
                               fontWeight: FontWeight.w600,
                               fontSize: 12,
-                              color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                              color: isDark
+                                  ? const Color(0xFF94A3B8)
+                                  : const Color(0xFF64748B),
                             ),
                           ),
                         ],
@@ -1013,7 +1099,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                         style: TextStyle(
                           fontSize: 13,
                           height: 1.35,
-                          color: isDark ? Colors.white70 : const Color(0xFF334155),
+                          color: isDark
+                              ? Colors.white70
+                              : const Color(0xFF334155),
                         ),
                       ),
                     ],
@@ -1051,10 +1139,16 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
+                    color: isDark
+                        ? const Color(0xFF1E293B)
+                        : const Color(0xFFF1F5F9),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.dashboard_rounded, color: _kAppBlue, size: 22),
+                  child: const Icon(
+                    Icons.dashboard_rounded,
+                    color: _kAppBlue,
+                    size: 22,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1062,14 +1156,23 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _isTagalog ? 'Pumunta sa Dashboard' : 'Open Full Dashboard',
-                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                        _isTagalog
+                            ? 'Pumunta sa Dashboard'
+                            : 'Open Full Dashboard',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
                       ),
                       Text(
-                        _isTagalog ? 'History, Diksyunaryo, at Settings' : 'History, dictionary & settings',
+                        _isTagalog
+                            ? 'History, Diksyunaryo, at Settings'
+                            : 'History, dictionary & settings',
                         style: TextStyle(
                           fontSize: 11,
-                          color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                          color: isDark
+                              ? const Color(0xFF94A3B8)
+                              : const Color(0xFF64748B),
                         ),
                       ),
                     ],
@@ -1077,12 +1180,19 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: _kAppBlue,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                  child: const Icon(
+                    Icons.arrow_forward_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
                 ),
               ],
             ),

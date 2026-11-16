@@ -2,20 +2,24 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/model_updater.dart';
 import '../services/settings_service.dart';
 import '../widgets/connectivity_badge.dart';
 import '../widgets/fsl_guide_sheet.dart';
 import 'sign_to_text_screen.dart';
 import 'speech_to_text_screen.dart';
+import 'text_to_sign_screen.dart';
 import 'settings_screen.dart';
 import 'landing_page_screen.dart';
 import 'history_screen.dart';
 
-const Color _kAppBlue = Color(0xFF0138FF);
-const Color _kAppYellow = Color(0xFFFFC801);
+const Color _kAppBlue = Color(0xFF2D5FB8);
+const Color _kAppYellow = Color(0xFFF4C95D);
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.onSelectTab});
+
+  final ValueChanged<int>? onSelectTab;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -37,18 +41,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openLandingPage(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const LandingPageScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const LandingPageScreen()));
   }
 
-  String _formatTtsLanguage(String code) {
-    final lower = code.toLowerCase();
-    if (lower.startsWith('fil') || lower.startsWith('tl')) return 'Filipino';
-    if (lower.contains('ph')) return 'English (PH)';
-    if (lower.contains('us')) return 'English (US)';
-    if (lower.contains('gb')) return 'English (UK)';
-    return code;
+  void _openDestination(BuildContext context, int tabIndex, Widget screen) {
+    final selectTab = widget.onSelectTab;
+    if (selectTab != null) {
+      selectTab(tabIndex);
+      return;
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
 
   @override
@@ -58,9 +62,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final settingsService = context.watch<SettingsService>();
     final textScale = settingsService.textScaleFactor;
 
-    final bgColor = isDarkMode ? const Color(0xFF090E1A) : const Color(0xFFF1F5F9);
+    final bgColor = isDarkMode
+        ? const Color(0xFF090E1A)
+        : const Color(0xFFF1F5F9);
     final textColor = isDarkMode ? Colors.white : const Color(0xFF0F172A);
-    final subtextColor = isDarkMode ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final subtextColor = isDarkMode
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -132,6 +140,15 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
+          IconButton(
             icon: const Icon(Icons.menu_book_outlined),
             tooltip: 'FSL Guide & Phrases',
             visualDensity: VisualDensity.compact,
@@ -154,14 +171,20 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: EdgeInsets.zero,
             children: [
               DrawerHeader(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: isDarkMode
-                        ? [_kAppBlue.withValues(alpha: 0.5), const Color(0xFF0C1220)]
-                        : [_kAppBlue, const Color(0xFF002BB5)],
+                        ? [
+                            _kAppBlue.withValues(alpha: 0.5),
+                            const Color(0xFF0C1220),
+                          ]
+                        : [_kAppBlue, const Color(0xFF1E3A8A)],
                   ),
                 ),
                 child: Column(
@@ -207,16 +230,23 @@ class _HomeScreenState extends State<HomeScreen> {
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: (isDarkMode ? _kAppYellow : _kAppBlue).withValues(alpha: 0.12),
+                    color: (isDarkMode ? _kAppYellow : _kAppBlue).withValues(
+                      alpha: 0.12,
+                    ),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
-                    isDarkMode ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+                    isDarkMode
+                        ? Icons.dark_mode_rounded
+                        : Icons.light_mode_rounded,
                     color: isDarkMode ? _kAppYellow : _kAppBlue,
                     size: 20,
                   ),
                 ),
-                title: const Text('Dark Mode', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                title: const Text(
+                  'Dark Mode',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
                 value: isDarkMode,
                 onChanged: (val) {
                   context.read<ThemeProvider>().setThemeMode(
@@ -228,7 +258,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
               // Text Size Scale for Accessibility
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16.0,
+                  vertical: 12.0,
+                ),
                 child: Row(
                   children: [
                     Container(
@@ -238,7 +271,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: _kAppBlue.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(Icons.format_size_rounded, color: _kAppBlue, size: 20),
+                      child: const Icon(
+                        Icons.format_size_rounded,
+                        color: _kAppBlue,
+                        size: 20,
+                      ),
                     ),
                     const SizedBox(width: 14),
                     Expanded(
@@ -281,20 +318,32 @@ class _HomeScreenState extends State<HomeScreen> {
               // Direct Navigation Destinations
               ListTile(
                 leading: const Icon(Icons.history_rounded, color: _kAppBlue),
-                title: const Text('Translation History', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                subtitle: const Text('View saved conversations & logs', style: TextStyle(fontSize: 12)),
+                title: const Text(
+                  'Translation History',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                subtitle: const Text(
+                  'View saved conversations & logs',
+                  style: TextStyle(fontSize: 12),
+                ),
                 onTap: () {
                   Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const HistoryScreen()),
-                  );
+                  _openDestination(context, 4, const HistoryScreen());
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.psychology_outlined, color: _kAppBlue),
-                title: const Text('FSL Model Status', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                subtitle: Text('Status: $_modelVersion', style: const TextStyle(fontSize: 12)),
+                leading: const Icon(
+                  Icons.psychology_outlined,
+                  color: _kAppBlue,
+                ),
+                title: const Text(
+                  'FSL Model Status',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                subtitle: Text(
+                  'Status: $_modelVersion',
+                  style: const TextStyle(fontSize: 12),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   Navigator.push(
@@ -305,8 +354,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.menu_book_rounded, color: _kAppBlue),
-                title: const Text('FSL Guide & Reference', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                subtitle: const Text('Phrases, alphabet & tips', style: TextStyle(fontSize: 12)),
+                title: const Text(
+                  'FSL Guide & Reference',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                subtitle: const Text(
+                  'Phrases, alphabet & tips',
+                  style: TextStyle(fontSize: 12),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   showFslGuideSheet(context);
@@ -314,8 +369,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.explore_outlined, color: _kAppBlue),
-                title: const Text('Welcome Guide & Tutorial', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                subtitle: const Text('Quick introduction to TinigSenyas', style: TextStyle(fontSize: 12)),
+                title: const Text(
+                  'Welcome Guide & Tutorial',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                subtitle: const Text(
+                  'Quick introduction to TinigSenyas',
+                  style: TextStyle(fontSize: 12),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   _openLandingPage(context);
@@ -323,8 +384,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.settings_outlined, color: _kAppBlue),
-                title: const Text('System Settings', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                subtitle: const Text('Voice tuning & preferences', style: TextStyle(fontSize: 12)),
+                title: const Text(
+                  'System Settings',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                subtitle: const Text(
+                  'Voice tuning & preferences',
+                  style: TextStyle(fontSize: 12),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   Navigator.push(
@@ -335,15 +402,22 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.info_outline_rounded, color: Colors.grey),
-                title: const Text('About TinigSenyas', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                leading: const Icon(
+                  Icons.info_outline_rounded,
+                  color: Colors.grey,
+                ),
+                title: const Text(
+                  'About TinigSenyas',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   showAboutDialog(
                     context: context,
                     applicationName: 'TinigSenyas',
-                    applicationVersion: '1.2.0',
-                    applicationLegalese: 'Filipino Sign Language e-Learning & Translation System',
+                    applicationVersion: ModelUpdater.currentAppVersion,
+                    applicationLegalese:
+                        'Filipino Sign Language e-Learning & Translation System',
                   );
                 },
               ),
@@ -367,7 +441,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      _kAppBlue.withValues(alpha: isDarkMode ? 0.30 : 0.20),
+                      _kAppBlue.withValues(alpha: isDarkMode ? 0.16 : 0.08),
                       _kAppBlue.withValues(alpha: 0.0),
                     ],
                   ),
@@ -388,7 +462,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      _kAppYellow.withValues(alpha: isDarkMode ? 0.20 : 0.18),
+                      _kAppYellow.withValues(alpha: isDarkMode ? 0.10 : 0.07),
                       _kAppYellow.withValues(alpha: 0.0),
                     ],
                   ),
@@ -401,7 +475,10 @@ class _HomeScreenState extends State<HomeScreen> {
           SafeArea(
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 14.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 16.0,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -429,12 +506,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'TRANSLATION MODES',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.8,
-                          color: isDarkMode ? const Color(0xFF60A5FA) : _kAppBlue,
+                        'Choose how to communicate',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: textColor,
                         ),
                       ),
                     ],
@@ -448,18 +523,18 @@ class _HomeScreenState extends State<HomeScreen> {
                     accentColor: _kAppBlue,
                     category: 'CAMERA RECOGNITION',
                     title: 'Sign to Text & Voice',
-                    description: 'Translate Filipino Sign Language gestures in real time using your device camera.',
+                    description:
+                        'Translate Filipino Sign Language gestures in real time using your device camera.',
                     actionText: 'Open Camera Translation',
                     isDark: isDarkMode,
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SignToTextScreen()),
-                      );
-                    },
+                    onTap: () => _openDestination(
+                      context,
+                      1,
+                      const SignToTextScreen(),
+                    ),
                   ),
 
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
 
                   // Card 2: SPEECH TO TEXT (Voice Recognition)
                   _PrimaryTranslationCard(
@@ -467,15 +542,34 @@ class _HomeScreenState extends State<HomeScreen> {
                     accentColor: _kAppYellow,
                     category: 'VOICE ASSISTANT',
                     title: 'Speech to Text & Signs',
-                    description: 'Speak naturally to transcribe your voice into clear text for deaf and hard-of-hearing partners.',
+                    description:
+                        'Speak naturally to transcribe your voice into clear text for deaf and hard-of-hearing partners.',
                     actionText: 'Start Voice Translation',
                     isDark: isDarkMode,
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SpeechToTextScreen()),
-                      );
-                    },
+                    onTap: () => _openDestination(
+                      context,
+                      3,
+                      const SpeechToTextScreen(),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Typed messages use the same recorded FSL clip preview as speech transcripts.
+                  _PrimaryTranslationCard(
+                    icon: Icons.chat_bubble_outline_rounded,
+                    accentColor: const Color(0xFF10B981),
+                    category: 'TYPE A MESSAGE',
+                    title: 'Text to FSL Signs',
+                    description:
+                        'Type a Filipino word or phrase and preview its available FSL sign clips.',
+                    actionText: 'Write a Message',
+                    isDark: isDarkMode,
+                    onTap: () => _openDestination(
+                      context,
+                      2,
+                      const TextToSignScreen(),
+                    ),
                   ),
 
                   const SizedBox(height: 24),
@@ -493,12 +587,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'QUICK TOOLS & EXPLORATION',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.8,
-                          color: isDarkMode ? const Color(0xFFFDE047) : const Color(0xFFB45309),
+                        'More tools',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: textColor,
                         ),
                       ),
                     ],
@@ -513,16 +605,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       Expanded(
                         child: _QuickToolCard(
                           icon: Icons.history_rounded,
-                          accentColor: const Color(0xFF3B82F6),
+                          accentColor: _kAppBlue,
                           title: 'History',
                           subtitle: 'Past logs',
                           isDark: isDarkMode,
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const HistoryScreen()),
-                            );
-                          },
+                          onTap: () => _openDestination(
+                            context,
+                            4,
+                            const HistoryScreen(),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -538,7 +629,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           onTap: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                              MaterialPageRoute(
+                                builder: (_) => const SettingsScreen(),
+                              ),
                             );
                           },
                         ),
@@ -581,10 +674,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final timeGreeting = hour < 12
         ? 'Magandang Umaga'
         : hour < 18
-            ? 'Magandang Hapon'
-            : 'Magandang Gabi';
-
-    final isModelTraining = _modelVersion == 'Not installed';
+        ? 'Magandang Hapon'
+        : 'Magandang Gabi';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -628,168 +719,49 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
 
-        const SizedBox(height: 14),
-
-        // Interactive Status Pills Row (Engaging & Accessible)
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          child: Row(
-            children: [
-              // 1. FSL Model Status Pill
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isDarkMode
-                          ? (isModelTraining
-                              ? Colors.amber.withValues(alpha: 0.15)
-                              : Colors.green.withValues(alpha: 0.15))
-                          : (isModelTraining
-                              ? Colors.amber.withValues(alpha: 0.12)
-                              : Colors.green.withValues(alpha: 0.12)),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: isModelTraining
-                            ? Colors.amber.withValues(alpha: 0.4)
-                            : Colors.green.withValues(alpha: 0.4),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: isModelTraining ? Colors.amber[700] : Colors.green[600],
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          isModelTraining ? 'Model: Training' : 'Model: Active',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: isModelTraining
-                                ? (isDarkMode ? Colors.amber[300] : Colors.amber[900])
-                                : (isDarkMode ? Colors.green[300] : Colors.green[800]),
-                          ),
-                        ),
-                      ],
-                    ),
+        const SizedBox(height: 12),
+        InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isDarkMode
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.white.withValues(alpha: 0.80),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: isDarkMode
+                    ? Colors.white.withValues(alpha: 0.12)
+                    : const Color(0xFFE2E8F0),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  settingsService.saveHistoryEnabled
+                      ? Icons.history_rounded
+                      : Icons.visibility_off_rounded,
+                  size: 15,
+                  color: subtextColor,
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  settingsService.saveHistoryEnabled
+                      ? 'Conversation history is on'
+                      : 'Private mode is on',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: subtextColor,
                   ),
                 ),
-              ),
-
-              const SizedBox(width: 8),
-
-              // 2. Speech Engine / TTS Pill
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isDarkMode
-                          ? _kAppBlue.withValues(alpha: 0.18)
-                          : _kAppBlue.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: _kAppBlue.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.volume_up_rounded,
-                          size: 13,
-                          color: isDarkMode ? const Color(0xFF93C5FD) : _kAppBlue,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          'TTS: ${_formatTtsLanguage(settingsService.ttsLanguage)}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: isDarkMode ? const Color(0xFF93C5FD) : _kAppBlue,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(width: 8),
-
-              // 3. Privacy / Mode Pill
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isDarkMode
-                          ? Colors.white.withValues(alpha: 0.07)
-                          : Colors.black.withValues(alpha: 0.05),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: isDarkMode
-                            ? Colors.white.withValues(alpha: 0.15)
-                            : Colors.black.withValues(alpha: 0.1),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          settingsService.saveHistoryEnabled
-                              ? Icons.history_rounded
-                              : Icons.visibility_off_rounded,
-                          size: 13,
-                          color: subtextColor,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          settingsService.saveHistoryEnabled ? 'History On' : 'Private Mode',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: subtextColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ],
@@ -822,7 +794,9 @@ class _PrimaryTranslationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final subtextColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final subtextColor = isDark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
@@ -835,9 +809,7 @@ class _PrimaryTranslationCard extends StatelessWidget {
                 : Colors.white.withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(22),
             border: Border.all(
-              color: isDark
-                  ? const Color(0xFF223253)
-                  : const Color(0xFFE2E8F0),
+              color: isDark ? const Color(0xFF223253) : const Color(0xFFE2E8F0),
               width: 1.2,
             ),
             boxShadow: [
@@ -868,7 +840,9 @@ class _PrimaryTranslationCard extends StatelessWidget {
                           width: 52,
                           height: 52,
                           decoration: BoxDecoration(
-                            color: accentColor.withValues(alpha: isDark ? 0.22 : 0.12),
+                            color: accentColor.withValues(
+                              alpha: isDark ? 0.22 : 0.12,
+                            ),
                             borderRadius: BorderRadius.circular(16),
                             border: Border.all(
                               color: accentColor.withValues(alpha: 0.4),
@@ -880,8 +854,12 @@ class _PrimaryTranslationCard extends StatelessWidget {
                               icon,
                               size: 28,
                               color: isDark
-                                  ? (accentColor == _kAppYellow ? _kAppYellow : const Color(0xFF60A5FA))
-                                  : (accentColor == _kAppYellow ? const Color(0xFFB45309) : _kAppBlue),
+                                  ? (accentColor == _kAppYellow
+                                        ? _kAppYellow
+                                        : const Color(0xFF60A5FA))
+                                  : (accentColor == _kAppYellow
+                                        ? const Color(0xFFB45309)
+                                        : _kAppBlue),
                             ),
                           ),
                         ),
@@ -892,9 +870,14 @@ class _PrimaryTranslationCard extends StatelessWidget {
                             children: [
                               // Category badge
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
                                 decoration: BoxDecoration(
-                                  color: accentColor.withValues(alpha: isDark ? 0.20 : 0.10),
+                                  color: accentColor.withValues(
+                                    alpha: isDark ? 0.20 : 0.10,
+                                  ),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
@@ -904,8 +887,12 @@ class _PrimaryTranslationCard extends StatelessWidget {
                                     fontSize: 10,
                                     letterSpacing: 0.5,
                                     color: isDark
-                                        ? (accentColor == _kAppYellow ? _kAppYellow : const Color(0xFF93C5FD))
-                                        : (accentColor == _kAppYellow ? const Color(0xFFB45309) : _kAppBlue),
+                                        ? (accentColor == _kAppYellow
+                                              ? _kAppYellow
+                                              : const Color(0xFF93C5FD))
+                                        : (accentColor == _kAppYellow
+                                              ? const Color(0xFFB45309)
+                                              : _kAppBlue),
                                   ),
                                 ),
                               ),
@@ -938,11 +925,18 @@ class _PrimaryTranslationCard extends StatelessWidget {
                     Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
                             color: accentColor == _kAppYellow
-                                ? (isDark ? _kAppYellow.withValues(alpha: 0.25) : const Color(0xFFFFFBEB))
-                                : (isDark ? _kAppBlue.withValues(alpha: 0.25) : const Color(0xFFEFF6FF)),
+                                ? (isDark
+                                      ? _kAppYellow.withValues(alpha: 0.25)
+                                      : const Color(0xFFFFFBEB))
+                                : (isDark
+                                      ? _kAppBlue.withValues(alpha: 0.25)
+                                      : const Color(0xFFEFF6FF)),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
                               color: accentColor.withValues(alpha: 0.35),
@@ -958,8 +952,12 @@ class _PrimaryTranslationCard extends StatelessWidget {
                                   fontSize: 12,
                                   fontWeight: FontWeight.w800,
                                   color: isDark
-                                      ? (accentColor == _kAppYellow ? _kAppYellow : const Color(0xFF93C5FD))
-                                      : (accentColor == _kAppYellow ? const Color(0xFFB45309) : _kAppBlue),
+                                      ? (accentColor == _kAppYellow
+                                            ? _kAppYellow
+                                            : const Color(0xFF93C5FD))
+                                      : (accentColor == _kAppYellow
+                                            ? const Color(0xFFB45309)
+                                            : _kAppBlue),
                                 ),
                               ),
                               const SizedBox(width: 6),
@@ -967,8 +965,12 @@ class _PrimaryTranslationCard extends StatelessWidget {
                                 Icons.arrow_forward_rounded,
                                 size: 14,
                                 color: isDark
-                                    ? (accentColor == _kAppYellow ? _kAppYellow : const Color(0xFF93C5FD))
-                                    : (accentColor == _kAppYellow ? const Color(0xFFB45309) : _kAppBlue),
+                                    ? (accentColor == _kAppYellow
+                                          ? _kAppYellow
+                                          : const Color(0xFF93C5FD))
+                                    : (accentColor == _kAppYellow
+                                          ? const Color(0xFFB45309)
+                                          : _kAppBlue),
                               ),
                             ],
                           ),
@@ -1007,7 +1009,9 @@ class _QuickToolCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
-    final subtextColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final subtextColor = isDark
+        ? const Color(0xFF94A3B8)
+        : const Color(0xFF64748B);
 
     return Container(
       decoration: BoxDecoration(
@@ -1019,7 +1023,9 @@ class _QuickToolCard extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: isDark ? Colors.black.withValues(alpha: 0.15) : _kAppBlue.withValues(alpha: 0.03),
+            color: isDark
+                ? Colors.black.withValues(alpha: 0.15)
+                : _kAppBlue.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),

@@ -7,10 +7,34 @@ import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform
 import 'package:flutter_secure_storage_platform_interface/flutter_secure_storage_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tinigsenyas/services/recognition/backend_recognition_service.dart';
+import 'package:tinigsenyas/services/recognition/recognition_service.dart';
 import 'package:tinigsenyas/services/settings_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('sends selected recognition mode to FastAPI backend', () async {
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform(
+      {},
+    );
+    final settings = SettingsService();
+    await settings.init();
+    await settings.setTtsServer(url: 'http://127.0.0.1:5000', token: '');
+    final adapter = _RecognitionAdapter();
+    final service = BackendRecognitionService(
+      settings: settings,
+      dio: Dio()..httpClientAdapter = adapter,
+    );
+
+    await service.initialize();
+    expect(adapter.lastRequestedMode, 'auto');
+    service.mode = RecognitionMode.medical;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(adapter.lastRequestedMode, 'medical');
+
+    service.dispose();
+  });
 
   test('publishes live hand-detection and frame-collection status', () async {
     SharedPreferences.setMockInitialValues({});
@@ -40,15 +64,115 @@ void main() {
     await service.stop();
     service.dispose();
   });
+
+  test('applies Chapter 3 confidence and top-2 margin gate', () async {
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform(
+      {},
+    );
+    final settings = SettingsService();
+    await settings.init();
+    await settings.setTtsServer(url: 'http://127.0.0.1:5000', token: '');
+
+    final adapter = _RecognitionAdapter();
+    final dio = Dio()..httpClientAdapter = adapter;
+    final service = BackendRecognitionService(settings: settings, dio: dio);
+
+    await service.initialize();
+    await service.start();
+
+    final emitted = <String>[];
+    final sub = service.predictions.listen(
+      (result) => emitted.add(result.label),
+    );
+
+    // Reject < 75% without top-2 label (alphabet fallback must meet 75%)
+    adapter.nextLivePayload = {
+      'is_paused': false,
+      'is_stable': true,
+      'label': 'A',
+      'confidence': 0.70,
+      'top2_label': '',
+      'top2_confidence': 0.0,
+    };
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(emitted, isEmpty);
+
+    // Reject >= 60% when top-2 margin < 0.12
+    adapter.nextLivePayload = {
+      'is_paused': false,
+      'is_stable': true,
+      'label': 'Kamusta',
+      'confidence': 0.65,
+      'top2_label': 'Salamat',
+      'top2_confidence': 0.56,
+    };
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(emitted, isEmpty);
+
+    // Accept >= 60% with >= 0.12 margin
+    adapter.nextLivePayload = {
+      'is_paused': false,
+      'is_stable': true,
+      'label': 'Kamusta',
+      'confidence': 0.65,
+      'top2_label': 'Salamat',
+      'top2_confidence': 0.50,
+    };
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(emitted, ['Kamusta']);
+
+    // Accept >= 75% even without top-2 label
+    adapter.nextLivePayload = {
+      'is_paused': false,
+      'is_stable': true,
+      'label': 'B',
+      'confidence': 0.76,
+      'top2_label': '',
+      'top2_confidence': 0.0,
+    };
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(emitted, ['Kamusta', 'B']);
+
+    await sub.cancel();
+    await service.stop();
+    service.dispose();
+  });
 }
 
 class _RecognitionAdapter implements HttpClientAdapter {
+  Map<String, Object?>? nextLivePayload;
+  String? lastRequestedMode;
+
   @override
   Future<ResponseBody> fetch(
     RequestOptions options,
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) async {
+    if (options.method == 'POST' &&
+        options.path.endsWith('/api/v1/predict/mode')) {
+      lastRequestedMode = options.queryParameters['mode'] as String?;
+      return _jsonResponse(options, {
+        'status': 'ok',
+        'mode': lastRequestedMode ?? 'auto',
+      });
+    }
+    if (options.method == 'GET' &&
+        options.path.endsWith('/api/v1/predict/live')) {
+      return _jsonResponse(
+        options,
+        nextLivePayload ??
+            {
+              'is_paused': false,
+              'is_stable': false,
+              'label': null,
+              'confidence': 0.0,
+              'top2_label': '',
+              'top2_confidence': 0.0,
+            },
+      );
+    }
     if (options.method == 'GET') {
       return _jsonResponse(options, {
         'ready': true,

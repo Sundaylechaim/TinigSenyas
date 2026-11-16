@@ -22,8 +22,8 @@ import '../services/settings_service.dart';
 import '../services/model_updater.dart';
 import '../services/recognition/recognition_service.dart' show RecognitionMode;
 
-const Color _kAppBlue = Color(0xFF0138FF);
-const Color _kAppYellow = Color(0xFFFFC801);
+const Color _kAppBlue = Color(0xFF2D5FB8);
+const Color _kAppYellow = Color(0xFFF4C95D);
 
 class SignToTextScreen extends StatefulWidget {
   const SignToTextScreen({super.key});
@@ -32,7 +32,8 @@ class SignToTextScreen extends StatefulWidget {
   State<SignToTextScreen> createState() => _SignToTextScreenState();
 }
 
-class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBindingObserver {
+class _SignToTextScreenState extends State<SignToTextScreen>
+    with WidgetsBindingObserver {
   late CameraService _cameraService;
   late TtsService _ttsService;
   SignResult? _currentPrediction;
@@ -77,10 +78,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     final modeLabel = _currentMode == RecognitionMode.phrases
         ? 'Phrases (Kamusta/Hello, Salamat, etc.)'
         : _currentMode == RecognitionMode.alphabet
-            ? 'Alphabet (A to Z Letters)'
-            : _currentMode == RecognitionMode.medical
-                ? 'Medical & Health (Lagnat, Doktor, Sipon, etc.)'
-                : 'Auto (Phrases, Alphabet & Medical)';
+        ? 'Alphabet (A to Z, Ñ and Ng)'
+        : _currentMode == RecognitionMode.medical
+        ? 'Medical & Health (Lagnat, Doktor, Sipon, etc.)'
+        : 'Auto (Phrases & Alphabet)';
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -96,8 +97,6 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   String _activeWordBuffer = '';
   String _composedSentence = '';
   List<String> _suggestedWords = [];
-  String? _lastAppendedLetter;
-  DateTime _lastLetterTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -136,11 +135,13 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       }
     });
 
-    _landmarksSubscription = _recognitionProvider?.landmarkPointsStream?.listen((hands) {
-      if (mounted) {
-        setState(() => _liveLandmarks = hands);
-      }
-    });
+    _landmarksSubscription = _recognitionProvider?.landmarkPointsStream?.listen(
+      (hands) {
+        if (mounted) {
+          setState(() => _liveLandmarks = hands);
+        }
+      },
+    );
 
     // Check for Google Maps style background model OTA updates if connected
     Future.delayed(const Duration(seconds: 4), () {
@@ -220,7 +221,8 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (kIsWeb) return;
 
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
       _updateWakelock(false);
       _cameraService.dispose();
       if (mounted) {
@@ -392,7 +394,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
         .split('\n')
         .first
         .trim();
-    if (clean.length > 120 || clean.contains('Stacktrace:') || clean.contains('io.flutter')) {
+    if (clean.length > 120 ||
+        clean.contains('Stacktrace:') ||
+        clean.contains('io.flutter')) {
       return 'Unable to start camera preview. Tap "Retry Camera" to reconnect.';
     }
     return clean;
@@ -427,9 +431,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not switch camera: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not switch camera: $e')));
       }
     }
   }
@@ -455,12 +459,15 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 8,
+                  ),
                   child: Text(
                     'Select Camera',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 const Divider(),
@@ -473,19 +480,24 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       cam.lensDirection == CameraLensDirection.front
                           ? Icons.camera_front_rounded
                           : cam.lensDirection == CameraLensDirection.back
-                              ? Icons.camera_rear_rounded
-                              : Icons.videocam_rounded,
+                          ? Icons.camera_rear_rounded
+                          : Icons.videocam_rounded,
                       color: isSelected ? _kAppBlue : null,
                     ),
                     title: Text(
                       CameraService.getCameraDisplayName(cam, index),
                       style: TextStyle(
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: isSelected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
                         color: isSelected ? _kAppBlue : null,
                       ),
                     ),
                     trailing: isSelected
-                        ? const Icon(Icons.check_circle_rounded, color: _kAppBlue)
+                        ? const Icon(
+                            Icons.check_circle_rounded,
+                            color: _kAppBlue,
+                          )
                         : null,
                     onTap: () async {
                       Navigator.of(context).pop();
@@ -507,7 +519,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     if (_isProcessingFrame || _recognitionProvider == null) return;
     _isProcessingFrame = true;
     final orientation = _cameraService.selectedCamera?.sensorOrientation;
-    final isFrontCamera = _cameraService.selectedCamera?.lensDirection == CameraLensDirection.front;
+    final isFrontCamera =
+        _cameraService.selectedCamera?.lensDirection ==
+        CameraLensDirection.front;
     _recognitionProvider!
         .processFrame(
           image,
@@ -531,26 +545,35 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     _isCheckingModelUpdate = true;
     try {
       final serverUrl = context.read<SettingsService>().ttsServerUrl;
-      final remoteManifest = serverUrl.isNotEmpty ? '$serverUrl/api/v1/ota/manifest' : ModelUpdater.defaultRemoteManifestUrl;
+      final remoteManifest = serverUrl.isNotEmpty
+          ? '$serverUrl/api/v1/ota/manifest'
+          : ModelUpdater.defaultRemoteManifestUrl;
       final updater = ModelUpdater(remoteManifestUrl: remoteManifest);
       final updateInfo = await updater.checkForUpdates();
       if (updateInfo.status == UpdateStatus.updateAvailable && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('New FSL Model Available (${updateInfo.version}). Tap to install.'),
+            content: Text(
+              'New FSL Model Available (${updateInfo.version}). Tap to install.',
+            ),
             duration: const Duration(seconds: 8),
             action: SnackBarAction(
               label: 'UPDATE',
               onPressed: () async {
-                await for (final progress in updater.downloadUpdate(updateInfo)) {
+                await for (final progress in updater.downloadUpdate(
+                  updateInfo,
+                )) {
                   if (progress.status == UpdateStatus.downloading && mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Downloading updated model: ${(progress.progress * 100).toInt()}%'),
+                        content: Text(
+                          'Downloading updated model: ${(progress.progress * 100).toInt()}%',
+                        ),
                         duration: const Duration(milliseconds: 600),
                       ),
                     );
-                  } else if (progress.status == UpdateStatus.upToDate && mounted) {
+                  } else if (progress.status == UpdateStatus.upToDate &&
+                      mounted) {
                     await _recognitionProvider?.reloadModels();
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -581,7 +604,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Private Mode active: sign is not saved to history.'),
+              content: Text(
+                'Private Mode active: sign is not saved to history.',
+              ),
               duration: Duration(milliseconds: 1200),
             ),
           );
@@ -615,25 +640,21 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   void _handlePredictionAssembly(SignResult prediction) {
     if (_isPaused) return;
     final label = prediction.label.trim();
-    // Check if the prediction is a single letter (A-Z or Ñ)
-    final isSingleLetter = label.length == 1 &&
-        (RegExp(r'^[A-ZÑ]$', caseSensitive: false).hasMatch(label));
+    // "Ng" is one FSL alphabet class and should be committed as one
+    // orthographic token, just like the single-character letters.
+    final normalizedLetter = label.toUpperCase();
+    final isAlphabetToken = RegExp(
+      r'^(?:[A-ZÑ]|NG)$',
+      caseSensitive: false,
+    ).hasMatch(label);
 
-    final now = DateTime.now();
-
-    if (isSingleLetter) {
-      // Debounce: append new letter if it differs from last letter OR user has held sign for >= 1200ms
-      final isNewLetter = label != _lastAppendedLetter;
-      final isHeldDuration = now.difference(_lastLetterTime).inMilliseconds >= 1200;
-
-      if (isNewLetter || isHeldDuration) {
-        setState(() {
-          _activeWordBuffer += label.toUpperCase();
-          _lastAppendedLetter = label;
-          _lastLetterTime = now;
-          _suggestedWords = _wordPredictionService.getPredictions(_activeWordBuffer);
-        });
-      }
+    if (isAlphabetToken) {
+      setState(() {
+        _activeWordBuffer += normalizedLetter;
+        _suggestedWords = _wordPredictionService.getPredictions(
+          _activeWordBuffer,
+        );
+      });
     } else if (label.length > 1 && prediction.confidence >= 0.60) {
       // If a full gesture word is signed (e.g., "Salamat" or "Kamusta"), suggest it directly
       setState(() {
@@ -657,7 +678,6 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       }
       _activeWordBuffer = '';
       _suggestedWords = [];
-      _lastAppendedLetter = null;
     });
   }
 
@@ -665,14 +685,18 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     HapticFeedback.selectionClick();
     setState(() {
       if (_activeWordBuffer.isNotEmpty) {
-        _activeWordBuffer = _activeWordBuffer.substring(0, _activeWordBuffer.length - 1);
-        _suggestedWords = _wordPredictionService.getPredictions(_activeWordBuffer);
+        _activeWordBuffer = _activeWordBuffer.substring(
+          0,
+          _activeWordBuffer.length - 1,
+        );
+        _suggestedWords = _wordPredictionService.getPredictions(
+          _activeWordBuffer,
+        );
       } else if (_composedSentence.isNotEmpty) {
         final words = _composedSentence.split(' ');
         words.removeLast();
         _composedSentence = words.join(' ');
       }
-      _lastAppendedLetter = null;
     });
   }
 
@@ -687,7 +711,6 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       _activeWordBuffer = '';
       _composedSentence = '';
       _suggestedWords = [];
-      _lastAppendedLetter = null;
     });
 
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -713,8 +736,12 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   void _copyToClipboard() {
     HapticFeedback.mediumImpact();
     final text = _composedSentence.isNotEmpty
-        ? (_activeWordBuffer.isNotEmpty ? '$_composedSentence $_activeWordBuffer' : _composedSentence)
-        : (_activeWordBuffer.isNotEmpty ? _activeWordBuffer : (_currentPrediction?.label ?? ''));
+        ? (_activeWordBuffer.isNotEmpty
+              ? '$_composedSentence $_activeWordBuffer'
+              : _composedSentence)
+        : (_activeWordBuffer.isNotEmpty
+              ? _activeWordBuffer
+              : (_currentPrediction?.label ?? ''));
 
     if (text.trim().isEmpty) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -734,7 +761,11 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       SnackBar(
         content: Row(
           children: [
-            const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 18),
+            const Icon(
+              Icons.check_circle_rounded,
+              color: Colors.greenAccent,
+              size: 18,
+            ),
             const SizedBox(width: 8),
             Expanded(child: Text('Copied "$text" to clipboard!')),
           ],
@@ -755,7 +786,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(newPaused ? '⏸️ Recognition paused' : '▶️ Recognition resumed'),
+        content: Text(
+          newPaused ? '⏸️ Recognition paused' : '▶️ Recognition resumed',
+        ),
         duration: const Duration(milliseconds: 900),
         behavior: SnackBarBehavior.floating,
       ),
@@ -764,8 +797,12 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
 
   void _speakComposedSentence() async {
     final textToSpeak = _composedSentence.isNotEmpty
-        ? (_activeWordBuffer.isNotEmpty ? '$_composedSentence $_activeWordBuffer' : _composedSentence)
-        : (_activeWordBuffer.isNotEmpty ? _activeWordBuffer : (_currentPrediction?.label ?? ''));
+        ? (_activeWordBuffer.isNotEmpty
+              ? '$_composedSentence $_activeWordBuffer'
+              : _composedSentence)
+        : (_activeWordBuffer.isNotEmpty
+              ? _activeWordBuffer
+              : (_currentPrediction?.label ?? ''));
 
     if (textToSpeak.trim().isNotEmpty) {
       HapticFeedback.mediumImpact();
@@ -773,9 +810,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
         await _ttsService.speak(textToSpeak.trim());
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Speech synthesis error: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Speech synthesis error: $e')));
         }
       }
     }
@@ -865,10 +902,14 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
           if (kIsWeb)
             IconButton(
               icon: Icon(
-                _useBackendFeed ? Icons.sensors_rounded : Icons.videocam_rounded,
+                _useBackendFeed
+                    ? Icons.sensors_rounded
+                    : Icons.videocam_rounded,
                 color: _kAppBlue,
               ),
-              tooltip: _useBackendFeed ? 'Switch to Browser Direct Camera' : 'Switch to Backend AI Video Stream',
+              tooltip: _useBackendFeed
+                  ? 'Switch to Browser Direct Camera'
+                  : 'Switch to Backend AI Video Stream',
               visualDensity: VisualDensity.compact,
               onPressed: () {
                 setState(() {
@@ -880,7 +921,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                 });
               },
             ),
-          if (!_useBackendFeed && _isCameraInitialized && _cameraService.canSwitchCamera)
+          if (!_useBackendFeed &&
+              _isCameraInitialized &&
+              _cameraService.canSwitchCamera)
             IconButton(
               icon: const Icon(Icons.cameraswitch_rounded),
               tooltip: 'Switch between front and back camera',
@@ -990,7 +1033,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                     Text(
                       'TinigSenyas requires camera access to recognize hand gestures and translate Filipino Sign Language (FSL) in real-time.',
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                        color: isDark
+                            ? const Color(0xFF94A3B8)
+                            : const Color(0xFF64748B),
                         height: 1.5,
                       ),
                       textAlign: TextAlign.center,
@@ -1030,7 +1075,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           backgroundColor: _kAppBlue,
                           foregroundColor: Colors.white,
                           minimumSize: const Size(double.infinity, 50),
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 14,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
@@ -1039,7 +1087,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                         icon: const Icon(Icons.settings_rounded),
                         label: const Text(
                           'Open App Settings',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -1048,7 +1099,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           HapticFeedback.lightImpact();
                           _checkPermissionAndStart();
                         },
-                        child: const Text('I have allowed permission (Check again)'),
+                        child: const Text(
+                          'I have allowed permission (Check again)',
+                        ),
                       ),
                     ] else ...[
                       ElevatedButton.icon(
@@ -1060,7 +1113,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           backgroundColor: _kAppBlue,
                           foregroundColor: Colors.white,
                           minimumSize: const Size(double.infinity, 50),
-                          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 28,
+                            vertical: 14,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
@@ -1069,7 +1125,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                         icon: const Icon(Icons.check_circle_outline_rounded),
                         label: const Text(
                           'Allow Camera Access',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
                         ),
                       ),
                     ],
@@ -1108,9 +1167,12 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   Widget _buildErrorState() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final isPermIssue = _isPermanentlyDenied ||
-        (_cameraError != null && _cameraError!.toLowerCase().contains('permission'));
-    final isInUseIssue = _cameraError != null &&
+    final isPermIssue =
+        _isPermanentlyDenied ||
+        (_cameraError != null &&
+            _cameraError!.toLowerCase().contains('permission'));
+    final isInUseIssue =
+        _cameraError != null &&
         (_cameraError!.toLowerCase().contains('notreadable') ||
             _cameraError!.toLowerCase().contains('in use') ||
             _cameraError!.toLowerCase().contains('hardware error'));
@@ -1143,15 +1205,20 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       height: 70,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: (isInUseIssue ? Colors.orange : theme.colorScheme.error)
-                            .withValues(alpha: 0.12),
+                        color:
+                            (isInUseIssue
+                                    ? Colors.orange
+                                    : theme.colorScheme.error)
+                                .withValues(alpha: 0.12),
                       ),
                       child: Icon(
                         isInUseIssue
                             ? Icons.videocam_off_rounded
                             : Icons.error_outline_rounded,
                         size: 38,
-                        color: isInUseIssue ? Colors.orange : theme.colorScheme.error,
+                        color: isInUseIssue
+                            ? Colors.orange
+                            : theme.colorScheme.error,
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -1159,8 +1226,8 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       isInUseIssue
                           ? 'Camera In Use or Unavailable'
                           : isPermIssue
-                              ? 'Camera Permission Issue'
-                              : 'Camera Error',
+                          ? 'Camera Permission Issue'
+                          : 'Camera Error',
                       style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
@@ -1171,10 +1238,12 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       isInUseIssue
                           ? 'The camera is currently locked by another application or blocked by system settings.'
                           : (_cameraError != null
-                              ? _formatUserFacingCameraError(_cameraError!)
-                              : 'Unable to connect to camera.'),
+                                ? _formatUserFacingCameraError(_cameraError!)
+                                : 'Unable to connect to camera.'),
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                        color: isDark
+                            ? const Color(0xFF94A3B8)
+                            : const Color(0xFF64748B),
                         height: 1.4,
                       ),
                       textAlign: TextAlign.center,
@@ -1189,7 +1258,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                               : const Color(0xFFF8FAFC),
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05),
+                            color: isDark
+                                ? Colors.white10
+                                : Colors.black.withValues(alpha: 0.05),
                           ),
                         ),
                         child: Column(
@@ -1197,12 +1268,21 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           children: [
                             const Text(
                               'Troubleshooting Steps:',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
                             ),
                             const SizedBox(height: 8),
-                            _buildTroubleshootItem('1. Close other background apps using the camera (video calls, camera app).'),
-                            _buildTroubleshootItem('2. Verify Camera permission is enabled for TinigSenyas in device Settings.'),
-                            _buildTroubleshootItem('3. If the camera remains unresponsive, restart TinigSenyas.'),
+                            _buildTroubleshootItem(
+                              '1. Close other background apps using the camera (video calls, camera app).',
+                            ),
+                            _buildTroubleshootItem(
+                              '2. Verify Camera permission is enabled for TinigSenyas in device Settings.',
+                            ),
+                            _buildTroubleshootItem(
+                              '3. If the camera remains unresponsive, restart TinigSenyas.',
+                            ),
                           ],
                         ),
                       ),
@@ -1231,7 +1311,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                         backgroundColor: _kAppBlue,
                         foregroundColor: Colors.white,
                         minimumSize: const Size(double.infinity, 48),
-                        padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 13),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 26,
+                          vertical: 13,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
                         ),
@@ -1255,7 +1338,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           foregroundColor: _kAppBlue,
                           side: const BorderSide(color: _kAppBlue, width: 1.5),
                           minimumSize: const Size(double.infinity, 48),
-                          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 22,
+                            vertical: 13,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
@@ -1276,6 +1362,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
       ),
     );
   }
+
   Widget _buildBackendFeedView() {
     final mediaQuery = MediaQuery.of(context);
     final topPadding = mediaQuery.padding.top + kToolbarHeight + 8;
@@ -1315,12 +1402,19 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                             shape: BoxShape.circle,
                             color: Colors.orange.withValues(alpha: 0.15),
                           ),
-                          child: const Icon(Icons.sensors_off_rounded, color: Colors.orange, size: 34),
+                          child: const Icon(
+                            Icons.sensors_off_rounded,
+                            color: Colors.orange,
+                            size: 34,
+                          ),
                         ),
                         const SizedBox(height: 16),
                         const Text(
                           'Backend AI Server Offline',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 10),
@@ -1328,7 +1422,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           'The Python server (server.py) is not running on port 5000. You can switch to your direct browser webcam right now, or launch run_web.ps1.',
                           style: TextStyle(
                             fontSize: 13,
-                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                            color: isDark
+                                ? const Color(0xFF94A3B8)
+                                : const Color(0xFF64748B),
                             height: 1.4,
                           ),
                           textAlign: TextAlign.center,
@@ -1405,7 +1501,11 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.videocam_off_rounded, size: 48, color: Colors.orange),
+                  const Icon(
+                    Icons.videocam_off_rounded,
+                    size: 48,
+                    color: Colors.orange,
+                  ),
                   const SizedBox(height: 12),
                   const Text('Backend video feed connecting on port 5000...'),
                   const SizedBox(height: 12),
@@ -1450,10 +1550,7 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   Widget _buildTroubleshootItem(String text) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 12, height: 1.3),
-      ),
+      child: Text(text, style: const TextStyle(fontSize: 12, height: 1.3)),
     );
   }
 
@@ -1464,16 +1561,20 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     return Stack(
       fit: StackFit.expand,
       children: [
-        CameraPreviewWidget(
-          cameraService: _cameraService,
-        ),
+        CameraPreviewWidget(cameraService: _cameraService),
         Builder(
           builder: (context) {
             final controller = _cameraService.controller;
-            final isRotated = !kIsWeb && MediaQuery.of(context).orientation == Orientation.portrait;
+            final isRotated =
+                !kIsWeb &&
+                MediaQuery.of(context).orientation == Orientation.portrait;
             final previewSize = controller?.value.previewSize;
-            final pw = isRotated ? (previewSize?.height.toInt() ?? 480) : (previewSize?.width.toInt() ?? 640);
-            final ph = isRotated ? (previewSize?.width.toInt() ?? 640) : (previewSize?.height.toInt() ?? 480);
+            final pw = isRotated
+                ? (previewSize?.height.toInt() ?? 480)
+                : (previewSize?.width.toInt() ?? 640);
+            final ph = isRotated
+                ? (previewSize?.width.toInt() ?? 640)
+                : (previewSize?.height.toInt() ?? 480);
             return HandLandmarkOverlay(
               hands: _liveLandmarks,
               frameWidth: pw,
@@ -1513,7 +1614,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   }
 
   Widget _buildFingerspellingWordAssembler() {
-    if (_activeWordBuffer.isEmpty && _composedSentence.isEmpty && _suggestedWords.isEmpty) {
+    if (_activeWordBuffer.isEmpty &&
+        _composedSentence.isEmpty &&
+        _suggestedWords.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -1558,7 +1661,11 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                         color: _kAppBlue.withValues(alpha: 0.15),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.spellcheck_rounded, color: _kAppBlue, size: 18),
+                      child: const Icon(
+                        Icons.spellcheck_rounded,
+                        color: _kAppBlue,
+                        size: 18,
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -1566,13 +1673,17 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                         text: TextSpan(
                           style: TextStyle(
                             fontSize: 16,
-                            color: isDark ? Colors.white : const Color(0xFF0F172A),
+                            color: isDark
+                                ? Colors.white
+                                : const Color(0xFF0F172A),
                           ),
                           children: [
                             if (_composedSentence.isNotEmpty)
                               TextSpan(
                                 text: '$_composedSentence ',
-                                style: const TextStyle(fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             if (_activeWordBuffer.isNotEmpty)
                               TextSpan(
@@ -1596,7 +1707,11 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                     ),
                     const SizedBox(width: 8),
                     IconButton(
-                      icon: const Icon(Icons.volume_up_rounded, color: _kAppBlue, size: 20),
+                      icon: const Icon(
+                        Icons.volume_up_rounded,
+                        color: _kAppBlue,
+                        size: 20,
+                      ),
                       tooltip: 'Speak sentence',
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
@@ -1623,7 +1738,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
-                          color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                          color: isDark
+                              ? const Color(0xFF94A3B8)
+                              : const Color(0xFF64748B),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -1635,10 +1752,17 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                               return Padding(
                                 padding: const EdgeInsets.only(right: 6),
                                 child: ActionChip(
-                                  avatar: const Icon(Icons.auto_awesome, size: 13, color: _kAppBlue),
+                                  avatar: const Icon(
+                                    Icons.auto_awesome,
+                                    size: 13,
+                                    color: _kAppBlue,
+                                  ),
                                   label: Text(
                                     word,
-                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
                                   ),
                                   backgroundColor: isDark
                                       ? const Color(0xFF1E293B)
@@ -1669,9 +1793,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
     final isDark = theme.brightness == Brightness.dark;
     final isPaused = _isPaused;
     final hasPrediction = _currentPrediction != null && !isPaused;
-    final isReady = _isModelReady || (_recognitionProvider?.isModelReady ?? false);
+    final isReady =
+        _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final confidence = _currentPrediction?.confidence ?? 0.0;
-    final isConfidenceHigh = confidence >= 0.70;
+    final isConfidenceHigh = confidence >= 0.75;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
@@ -1686,8 +1811,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
             borderRadius: BorderRadius.circular(24),
             border: Border.all(
               color: isPaused
-                  ? const Color(0xFFFFC801).withValues(alpha: 0.5)
-                  : (isDark ? Colors.white.withValues(alpha: 0.20) : Colors.white),
+                  ? _kAppYellow.withValues(alpha: 0.5)
+                  : (isDark
+                        ? Colors.white.withValues(alpha: 0.20)
+                        : Colors.white),
               width: 1.5,
             ),
             boxShadow: [
@@ -1709,23 +1836,29 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       color: isPaused
                           ? const Color(0xFFD97706).withValues(alpha: 0.18)
                           : hasPrediction
-                              ? (isConfidenceHigh
-                                  ? const Color(0xFF10B981).withValues(alpha: 0.18)
-                                  : _kAppBlue.withValues(alpha: 0.15))
-                              : Colors.grey.withValues(alpha: 0.12),
+                          ? (isConfidenceHigh
+                                ? const Color(
+                                    0xFF10B981,
+                                  ).withValues(alpha: 0.18)
+                                : _kAppBlue.withValues(alpha: 0.15))
+                          : Colors.grey.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
                       isPaused
                           ? Icons.pause_circle_filled_rounded
                           : hasPrediction
-                              ? (isConfidenceHigh ? Icons.verified_rounded : Icons.check_circle_rounded)
-                              : Icons.radar_rounded,
+                          ? (isConfidenceHigh
+                                ? Icons.verified_rounded
+                                : Icons.check_circle_rounded)
+                          : Icons.radar_rounded,
                       color: isPaused
                           ? const Color(0xFFD97706)
                           : hasPrediction
-                              ? (isConfidenceHigh ? const Color(0xFF10B981) : _kAppBlue)
-                              : Colors.grey,
+                          ? (isConfidenceHigh
+                                ? const Color(0xFF10B981)
+                                : _kAppBlue)
+                          : Colors.grey,
                       size: 26,
                     ),
                   ),
@@ -1736,10 +1869,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       label: isPaused
                           ? 'Sign recognition paused. Hands at rest. Raise hands into frame to sign.'
                           : hasPrediction
-                              ? 'Recognized Filipino sign: ${_currentPrediction!.label}, confidence ${(confidence * 100).toInt()} percent'
-                              : isReady
-                                  ? 'Camera ready. Position hand gestures in frame to sign.'
-                                  : 'Initializing sign recognition model.',
+                          ? 'Recognized Filipino sign: ${_currentPrediction!.label}, confidence ${(confidence * 100).toInt()} percent'
+                          : isReady
+                          ? 'Camera ready. Position hand gestures in frame to sign.'
+                          : 'Initializing sign recognition model.',
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
@@ -1748,17 +1881,21 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                             isPaused
                                 ? '⏸️ Paused (Hands at rest)'
                                 : hasPrediction
-                                    ? _currentPrediction!.label
-                                    : isReady
-                                        ? 'Position hands to sign...'
-                                        : 'Initializing FSL model...',
+                                ? _currentPrediction!.label
+                                : isReady
+                                ? 'Position hands to sign...'
+                                : 'Initializing FSL model...',
                             style: TextStyle(
                               fontSize: (isPaused || hasPrediction) ? 20 : 15,
                               fontWeight: FontWeight.w900,
-                              letterSpacing: (isPaused || hasPrediction) ? 0.4 : 0.0,
+                              letterSpacing: (isPaused || hasPrediction)
+                                  ? 0.4
+                                  : 0.0,
                               color: isPaused
                                   ? const Color(0xFFD97706)
-                                  : (isDark ? Colors.white : const Color(0xFF0F172A)),
+                                  : (isDark
+                                        ? Colors.white
+                                        : const Color(0xFF0F172A)),
                             ),
                           ),
                           if (isPaused)
@@ -1767,7 +1904,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                                color: isDark
+                                    ? const Color(0xFF94A3B8)
+                                    : const Color(0xFF64748B),
                               ),
                             )
                           else if (hasPrediction)
@@ -1776,7 +1915,9 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                                color: isDark
+                                    ? const Color(0xFF94A3B8)
+                                    : const Color(0xFF64748B),
                               ),
                             ),
                         ],
@@ -1788,7 +1929,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                     children: [
                       if (isPaused)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFD97706),
                             borderRadius: BorderRadius.circular(10),
@@ -1796,7 +1940,11 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.pause_rounded, size: 14, color: Colors.white),
+                              Icon(
+                                Icons.pause_rounded,
+                                size: 14,
+                                color: Colors.white,
+                              ),
                               SizedBox(width: 4),
                               Text(
                                 'PAUSED',
@@ -1811,20 +1959,29 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                         )
                       else if (hasPrediction && isReady)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
                             color: isConfidenceHigh
                                 ? const Color(0xFF10B981)
-                                : (confidence >= 0.60 ? _kAppBlue : _kAppYellow),
+                                : (confidence >= 0.60
+                                      ? _kAppBlue
+                                      : _kAppYellow),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                isConfidenceHigh ? Icons.verified_rounded : Icons.trending_up_rounded,
+                                isConfidenceHigh
+                                    ? Icons.verified_rounded
+                                    : Icons.trending_up_rounded,
                                 size: 13,
-                                color: (isConfidenceHigh || confidence >= 0.60) ? Colors.white : const Color(0xFF111827),
+                                color: (isConfidenceHigh || confidence >= 0.60)
+                                    ? Colors.white
+                                    : const Color(0xFF111827),
                               ),
                               const SizedBox(width: 4),
                               Text(
@@ -1832,7 +1989,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                                 style: TextStyle(
                                   fontWeight: FontWeight.w900,
                                   fontSize: 12,
-                                  color: (isConfidenceHigh || confidence >= 0.60) ? Colors.white : const Color(0xFF111827),
+                                  color:
+                                      (isConfidenceHigh || confidence >= 0.60)
+                                      ? Colors.white
+                                      : const Color(0xFF111827),
                                 ),
                               ),
                             ],
@@ -1841,11 +2001,19 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                       const SizedBox(width: 6),
                       IconButton(
                         icon: Icon(
-                          isPaused ? Icons.play_circle_fill_rounded : Icons.pause_circle_outline_rounded,
-                          color: isPaused ? const Color(0xFF10B981) : (isDark ? Colors.white70 : const Color(0xFF64748B)),
+                          isPaused
+                              ? Icons.play_circle_fill_rounded
+                              : Icons.pause_circle_outline_rounded,
+                          color: isPaused
+                              ? const Color(0xFF10B981)
+                              : (isDark
+                                    ? Colors.white70
+                                    : const Color(0xFF64748B)),
                           size: 24,
                         ),
-                        tooltip: isPaused ? 'Resume recognition' : 'Pause recognition',
+                        tooltip: isPaused
+                            ? 'Resume recognition'
+                            : 'Pause recognition',
                         constraints: const BoxConstraints(),
                         padding: EdgeInsets.zero,
                         onPressed: _toggleManualPause,
@@ -1902,7 +2070,8 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
   Widget _buildRecognitionStatus() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final isReady = _isModelReady || (_recognitionProvider?.isModelReady ?? false);
+    final isReady =
+        _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final isPaused = _isPaused;
     final isTracking = _liveLandmarks.isNotEmpty && !isPaused;
 
@@ -1942,22 +2111,26 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
             color: _recognitionError != null
                 ? Colors.redAccent.withValues(alpha: 0.85)
                 : isPaused
-                    ? const Color(0xFFD97706).withValues(alpha: 0.90)
-                    : (isDark ? const Color(0xFF0C1220).withValues(alpha: 0.75) : Colors.white.withValues(alpha: 0.85)),
+                ? const Color(0xFFD97706).withValues(alpha: 0.90)
+                : (isDark
+                      ? const Color(0xFF0C1220).withValues(alpha: 0.75)
+                      : Colors.white.withValues(alpha: 0.85)),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: isPaused
-                  ? const Color(0xFFFFC801).withValues(alpha: 0.6)
+                  ? _kAppYellow.withValues(alpha: 0.6)
                   : isTracking
-                      ? const Color(0xFF10B981).withValues(alpha: 0.5)
-                      : (isDark ? Colors.white12 : Colors.white60),
+                  ? const Color(0xFF10B981).withValues(alpha: 0.5)
+                  : (isDark ? Colors.white12 : Colors.white60),
             ),
           ),
           child: Row(
             children: [
               Icon(
                 icon,
-                color: (_recognitionError != null || isPaused) ? Colors.white : iconColor,
+                color: (_recognitionError != null || isPaused)
+                    ? Colors.white
+                    : iconColor,
                 size: 20,
               ),
               const SizedBox(width: 10),
@@ -1985,16 +2158,25 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                     },
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: _kAppBlue.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: _kAppBlue.withValues(alpha: 0.3)),
+                        border: Border.all(
+                          color: _kAppBlue.withValues(alpha: 0.3),
+                        ),
                       ),
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.cameraswitch_rounded, size: 16, color: _kAppBlue),
+                          Icon(
+                            Icons.cameraswitch_rounded,
+                            size: 16,
+                            color: _kAppBlue,
+                          ),
                           SizedBox(width: 6),
                           Text(
                             'Switch',
@@ -2021,11 +2203,16 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                   },
                   borderRadius: BorderRadius.circular(10),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: _kAppBlue.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _kAppBlue.withValues(alpha: 0.3)),
+                      border: Border.all(
+                        color: _kAppBlue.withValues(alpha: 0.3),
+                      ),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -2034,10 +2221,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           _currentMode == RecognitionMode.phrases
                               ? Icons.chat_bubble_outline_rounded
                               : _currentMode == RecognitionMode.alphabet
-                                  ? Icons.spellcheck_rounded
-                                  : _currentMode == RecognitionMode.medical
-                                      ? Icons.medical_services_rounded
-                                      : Icons.auto_mode_rounded,
+                              ? Icons.spellcheck_rounded
+                              : _currentMode == RecognitionMode.medical
+                              ? Icons.medical_services_rounded
+                              : Icons.auto_mode_rounded,
                           size: 15,
                           color: _kAppBlue,
                         ),
@@ -2046,10 +2233,10 @@ class _SignToTextScreenState extends State<SignToTextScreen> with WidgetsBinding
                           _currentMode == RecognitionMode.phrases
                               ? 'Phrases'
                               : _currentMode == RecognitionMode.alphabet
-                                  ? 'A–Z'
-                                  : _currentMode == RecognitionMode.medical
-                                      ? 'Medical'
-                                      : 'Auto',
+                              ? 'A–Z'
+                              : _currentMode == RecognitionMode.medical
+                              ? 'Medical'
+                              : 'Auto',
                           style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
@@ -2115,11 +2302,12 @@ class _ActionButton extends StatelessWidget {
                   height: 56,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: color.withValues(alpha: 0.5), width: 1.5),
+                    border: Border.all(
+                      color: color.withValues(alpha: 0.5),
+                      width: 1.5,
+                    ),
                   ),
-                  child: Center(
-                    child: Icon(icon, color: color, size: 26),
-                  ),
+                  child: Center(child: Icon(icon, color: color, size: 26)),
                 ),
               ),
             ),

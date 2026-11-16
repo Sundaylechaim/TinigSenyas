@@ -8,9 +8,10 @@ import '../services/database_helper.dart';
 import '../services/speech_transcript_session.dart';
 import '../widgets/connectivity_badge.dart';
 import '../services/settings_service.dart';
+import 'text_to_sign_screen.dart';
 
-const Color _kAppBlue = Color(0xFF0138FF);
-const Color _kAppYellow = Color(0xFFFFC801);
+const Color _kAppBlue = Color(0xFF2D5FB8);
+const Color _kAppYellow = Color(0xFFF4C95D);
 
 class SpeechToTextScreen extends StatefulWidget {
   const SpeechToTextScreen({super.key});
@@ -92,7 +93,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
         final consentGiven = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            icon: const Icon(Icons.mic, color: Color(0xFF0138FF), size: 40),
+            icon: const Icon(Icons.mic, color: _kAppBlue, size: 40),
             title: const Text('Microphone Consent'),
             content: const Text(
               'TinigSenyas needs your consent to access the microphone to convert your spoken voice '
@@ -114,7 +115,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
         if (consentGiven != true) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Audio recording consent is required.')),
+              const SnackBar(
+                content: Text('Audio recording consent is required.'),
+              ),
             );
           }
           return;
@@ -192,7 +195,10 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
     }
   }
 
-  Future<void> _stopListening(int sessionId, {bool finalizePartial = true}) async {
+  Future<void> _stopListening(
+    int sessionId, {
+    bool finalizePartial = true,
+  }) async {
     if (_isStopping) return;
     setState(() => _isStopping = true);
     try {
@@ -235,7 +241,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Private Mode active: conversation history is not saved.'),
+            content: Text(
+              'Private Mode active: conversation history is not saved.',
+            ),
             duration: Duration(milliseconds: 1200),
           ),
         );
@@ -333,10 +341,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
             ),
           ],
         ),
-        actions: const [
-          ConnectivityBadge(),
-          SizedBox(width: 10),
-        ],
+        actions: const [ConnectivityBadge(), SizedBox(width: 10)],
       ),
 
       // CONSISTENT AMBIENT BACKGROUND LAYER
@@ -354,7 +359,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      _kAppYellow.withValues(alpha: isDark ? 0.25 : 0.22),
+                      _kAppYellow.withValues(alpha: isDark ? 0.12 : 0.07),
                       _kAppYellow.withValues(alpha: 0.0),
                     ],
                   ),
@@ -374,7 +379,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      _kAppBlue.withValues(alpha: isDark ? 0.25 : 0.16),
+                      _kAppBlue.withValues(alpha: isDark ? 0.14 : 0.07),
                       _kAppBlue.withValues(alpha: 0.0),
                     ],
                   ),
@@ -386,7 +391,10 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
           // Main Screen Body
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 12.0,
+              ),
               child: Column(
                 children: [
                   if (_speechError != null)
@@ -397,16 +405,25 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                       decoration: BoxDecoration(
                         color: Colors.redAccent.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+                        border: Border.all(
+                          color: Colors.redAccent.withValues(alpha: 0.3),
+                        ),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 20),
+                          const Icon(
+                            Icons.error_outline_rounded,
+                            color: Colors.redAccent,
+                            size: 20,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               _speechError!,
-                              style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                              style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 13,
+                              ),
                             ),
                           ),
                           if (!_speechAvailable)
@@ -448,7 +465,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                                         width: 58,
                                         height: 58,
                                         decoration: BoxDecoration(
-                                          color: _kAppYellow.withValues(alpha: 0.2),
+                                          color: _kAppYellow.withValues(
+                                            alpha: 0.2,
+                                          ),
                                           shape: BoxShape.circle,
                                         ),
                                         child: const Icon(
@@ -463,7 +482,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.w800,
-                                          color: isDark ? Colors.white : const Color(0xFF0F172A),
+                                          color: isDark
+                                              ? Colors.white
+                                              : const Color(0xFF0F172A),
                                         ),
                                       ),
                                       const SizedBox(height: 6),
@@ -472,7 +493,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
                                           fontSize: 13,
-                                          color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                                          color: isDark
+                                              ? const Color(0xFF94A3B8)
+                                              : const Color(0xFF64748B),
                                           height: 1.4,
                                         ),
                                       ),
@@ -483,10 +506,19 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                                   physics: const BouncingScrollPhysics(),
                                   children: [
                                     ..._messages.map(
-                                      (msg) => _buildMessageBubble(msg, isFinal: true, isDark: isDark),
+                                      (msg) => _buildMessageBubble(
+                                        msg,
+                                        isFinal: true,
+                                        isDark: isDark,
+                                      ),
                                     ),
-                                    if (_isListening && _currentWords.isNotEmpty)
-                                      _buildMessageBubble(_currentWords, isFinal: false, isDark: isDark),
+                                    if (_isListening &&
+                                        _currentWords.isNotEmpty)
+                                      _buildMessageBubble(
+                                        _currentWords,
+                                        isFinal: false,
+                                        isDark: isDark,
+                                      ),
                                   ],
                                 ),
                         ),
@@ -500,14 +532,21 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                   SizedBox(
                     height: 54,
                     child: ElevatedButton.icon(
-                      onPressed: _speechAvailable && !_isStarting && !_isStopping
+                      onPressed:
+                          _speechAvailable && !_isStarting && !_isStopping
                           ? _toggleListen
                           : null,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: _isListening ? Colors.redAccent : _kAppYellow,
-                        foregroundColor: _isListening ? Colors.white : const Color(0xFF111827),
+                        backgroundColor: _isListening
+                            ? Colors.redAccent
+                            : _kAppYellow,
+                        foregroundColor: _isListening
+                            ? Colors.white
+                            : const Color(0xFF111827),
                         elevation: 4,
-                        shadowColor: (_isListening ? Colors.redAccent : _kAppYellow).withValues(alpha: 0.4),
+                        shadowColor:
+                            (_isListening ? Colors.redAccent : _kAppYellow)
+                                .withValues(alpha: 0.4),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
                         ),
@@ -525,7 +564,10 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                             : _isListening
                             ? 'Stop Listening'
                             : 'Tap to Speak',
-                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15,
+                        ),
                       ),
                     ),
                   ),
@@ -539,7 +581,11 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
     );
   }
 
-  Widget _buildMessageBubble(String message, {required bool isFinal, required bool isDark}) {
+  Widget _buildMessageBubble(
+    String message, {
+    required bool isFinal,
+    required bool isDark,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -575,7 +621,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                             : (isDark ? Colors.white : const Color(0xFF111827)),
                         fontSize: 16,
                         fontWeight: isFinal ? FontWeight.w700 : FontWeight.w600,
-                        fontStyle: isFinal ? FontStyle.normal : FontStyle.italic,
+                        fontStyle: isFinal
+                            ? FontStyle.normal
+                            : FontStyle.italic,
                       ),
                     ),
                   ),
@@ -589,6 +637,25 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                       ),
                       onPressed: () => _speakMessage(message),
                       tooltip: 'Speak',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.sign_language_rounded,
+                        size: 18,
+                        color: _kAppYellow,
+                      ),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                TextToSignScreen(initialText: message),
+                          ),
+                        );
+                      },
+                      tooltip: 'Show available FSL signs',
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),

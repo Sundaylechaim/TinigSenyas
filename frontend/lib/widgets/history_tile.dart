@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/conversation.dart';
 
-const Color _kAppBlue = Color(0xFF0138FF);
-const Color _kAppYellow = Color(0xFFFFC801);
+const Color _kAppBlue = Color(0xFF2D5FB8);
+const Color _kAppYellow = Color(0xFFF4C95D);
 
 class HistoryTile extends StatelessWidget {
   final Conversation conversation;
@@ -40,9 +40,7 @@ class HistoryTile extends StatelessWidget {
         color: isDark ? const Color(0xFF141F36) : Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: isDark
-              ? const Color(0xFF223253)
-              : const Color(0xFFE2E8F0),
+          color: isDark ? const Color(0xFF223253) : const Color(0xFFE2E8F0),
           width: 1.2,
         ),
         boxShadow: [
@@ -102,7 +100,9 @@ class HistoryTile extends StatelessWidget {
                         style: TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 15,
-                          color: isDark ? Colors.white : const Color(0xFF0F172A),
+                          color: isDark
+                              ? Colors.white
+                              : const Color(0xFF0F172A),
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -112,7 +112,10 @@ class HistoryTile extends StatelessWidget {
                         children: [
                           // Source badge
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
                               color: isSpeech
                                   ? _kAppYellow.withValues(alpha: 0.18)
@@ -125,8 +128,12 @@ class HistoryTile extends StatelessWidget {
                                 fontSize: 10,
                                 fontWeight: FontWeight.w800,
                                 color: isSpeech
-                                    ? (isDark ? _kAppYellow : const Color(0xFFB45309))
-                                    : (isDark ? const Color(0xFF60A5FA) : _kAppBlue),
+                                    ? (isDark
+                                          ? _kAppYellow
+                                          : const Color(0xFFB45309))
+                                    : (isDark
+                                          ? const Color(0xFF60A5FA)
+                                          : _kAppBlue),
                               ),
                             ),
                           ),
@@ -137,7 +144,9 @@ class HistoryTile extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                                color: isDark
+                                    ? const Color(0xFF94A3B8)
+                                    : const Color(0xFF64748B),
                               ),
                             ),
                           ],
@@ -160,7 +169,9 @@ class HistoryTile extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
+                        color: isDark
+                            ? const Color(0xFF64748B)
+                            : const Color(0xFF94A3B8),
                       ),
                     ),
                     if (onSpeak != null) ...[

@@ -91,6 +91,7 @@ class TestModelInference(unittest.TestCase):
 
         alpha_classes = np.load(self.alphabet_classes_path, allow_pickle=True)
         num_alpha = len(alpha_classes)
+        self.assertEqual(str(alpha_classes[-1]), "\u00d1")
         self.assertEqual(list(input_details[0]["shape"]), [1, 63])
         self.assertEqual(list(output_details[0]["shape"]), [1, num_alpha])
 
@@ -103,6 +104,40 @@ class TestModelInference(unittest.TestCase):
         pred_letter = str(alpha_classes[int(np.argmax(out))])
         print(f"[OK] Alphabet model inference succeeded! Predicted letter: '{pred_letter}' (out of {num_alpha} letters)")
 
+    def test_04b_medical_inference(self):
+        """Verify the dedicated Medical FSL model matches its 25 class labels."""
+        medical_model_path = os.path.join(self.models_dir, "fsl_medical.tflite")
+        medical_classes_path = os.path.join(self.models_dir, "medical_classes.npy")
+        self.assertTrue(os.path.isfile(medical_model_path), "Medical FSL model is missing")
+        self.assertTrue(os.path.isfile(medical_classes_path), "Medical FSL class labels are missing")
+
+        try:
+            from ai_edge_litert.interpreter import Interpreter
+        except Exception:
+            import importlib
+            tf_interp = importlib.import_module("tensorflow.lite.python.interpreter")
+            Interpreter = getattr(tf_interp, "Interpreter")
+
+        classes = np.load(medical_classes_path, allow_pickle=True)
+        interpreter = Interpreter(model_path=medical_model_path)
+        interpreter.allocate_tensors()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
+        self.assertEqual(list(input_details[0]["shape"]), [1, 60, 75, 3])
+        self.assertEqual(list(output_details[0]["shape"]), [1, len(classes)])
+
+        interpreter.set_tensor(
+            input_details[0]["index"], np.zeros((1, 60, 75, 3), dtype=np.float32)
+        )
+        interpreter.invoke()
+        output = interpreter.get_tensor(output_details[0]["index"])[0]
+        self.assertEqual(len(output), len(classes))
+        print(
+            f"[OK] Medical FSL inference succeeded! "
+            f"Output labels: {len(classes)} (17 named, 8 placeholders)."
+        )
+
     def test_05_palm_detection_and_pause(self):
         """Verify the Open Palm / Stop gesture detection and pause buffer reset logic."""
         from sign_classifier import SignClassifier
@@ -110,6 +145,16 @@ class TestModelInference(unittest.TestCase):
         classifier = SignClassifier()
         self.assertFalse(classifier.is_paused)
         self.assertEqual(classifier.palm_hold_count, 0)
+        self.assertTrue(classifier.has_medical_model)
+        medical_result = classifier._evaluate_hypotheses(
+            np.zeros((60, 75, 3), dtype=np.float32),
+            detected_hands_count=1,
+            model="medical",
+        )
+        self.assertIn(medical_result[0], [str(label) for label in classifier.medical_classes])
+        classifier.set_mode("medical")
+        self.assertEqual(classifier.requested_mode, "medical")
+        classifier.set_mode("auto")
 
         class MockLandmark:
             def __init__(self, x, y, z=0.0):

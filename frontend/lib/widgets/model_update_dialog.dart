@@ -129,7 +129,7 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'App Version: 1.2.0 (Model: ${info.currentVersion})',
+            'App Version: ${ModelUpdater.currentAppVersion} (Model: ${info.currentVersion})',
             style: const TextStyle(fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 12),
@@ -149,7 +149,11 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
             const SizedBox(height: 12),
           ],
           if (info.status == UpdateStatus.upToDate && info.progress < 1.0) ...[
-            Text('Your app and AI models are up to date!'),
+            Text(
+              _appUpdateNotice == null
+                  ? 'Your app and AI models are up to date!'
+                  : 'AI models are up to date.',
+            ),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,

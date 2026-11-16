@@ -308,10 +308,12 @@ latest_prediction: dict = {
     "palm_hold_progress": 0.0,
 }
 global_classifier = None
+requested_recognition_mode = "auto"
 
 
 def generate_frames():
     global latest_hand_result, latest_hand_features, latest_prediction, global_classifier
+    global requested_recognition_mode
     if sys.platform == "win32":
         camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if not camera.isOpened():
@@ -326,6 +328,7 @@ def generate_frames():
     if HAS_SIGN_CLASSIFIER:
         try:
             classifier = SignClassifier()
+            classifier.set_mode(requested_recognition_mode)
             global_classifier = classifier
             logger.info("ST-GCN SignClassifier active for live video feed.")
         except Exception as exc:
@@ -389,6 +392,46 @@ def get_live_prediction():
     return latest_prediction
 
 
+@app.post("/api/v1/predict/mode", tags=["Sign Language Recognition"])
+def set_recognition_mode(mode: str = "auto"):
+    """Selects which on-device/backend model family the live feed should use."""
+    global requested_recognition_mode, latest_prediction, global_classifier
+    mode = mode.strip().lower()
+    if mode not in {"auto", "alphabet", "phrases", "medical"}:
+        raise HTTPException(
+            status_code=400,
+            detail="mode must be one of: auto, alphabet, phrases, medical",
+        )
+
+    if mode == "medical" and global_classifier is not None and not global_classifier.has_medical_model:
+        raise HTTPException(
+            status_code=503,
+            detail="The Medical FSL model is unavailable on this backend.",
+        )
+
+    requested_recognition_mode = mode
+    if global_classifier is not None:
+        try:
+            global_classifier.set_mode(mode)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    latest_prediction = {
+        "label": None,
+        "confidence": 0.0,
+        "top2_label": "",
+        "top2_confidence": 0.0,
+        "hands_count": 0,
+        "buffer_progress": 0.0,
+        "window_duration_seconds": 2.0,
+        "is_stable": False,
+        "is_paused": False,
+        "palm_hold_progress": 0.0,
+        "sign_type": mode,
+    }
+    return {"status": "ok", "mode": mode}
+
+
 @app.post("/api/v1/predict/frame", tags=["Sign Language Recognition"])
 async def predict_frame(request: Request):
     """
@@ -396,6 +439,14 @@ async def predict_frame(request: Request):
     Supports raw JPEG bytes and multipart uploads.
     """
     global latest_hand_result, latest_hand_features, latest_prediction, global_classifier
+    global requested_recognition_mode
+
+    requested_mode = request.query_params.get("mode", "auto").strip().lower()
+    if requested_mode not in {"auto", "alphabet", "phrases", "medical"}:
+        raise HTTPException(
+            status_code=400,
+            detail="mode must be one of: auto, alphabet, phrases, medical",
+        )
 
     body = await request.body()
     if not body:
@@ -429,7 +480,11 @@ async def predict_frame(request: Request):
             logger.error("Failed to initialize SignClassifier: %s", exc)
 
     if global_classifier is not None:
-        processed_frame, pred_payload = global_classifier.process_frame(img)
+        if requested_mode != requested_recognition_mode:
+            requested_recognition_mode = requested_mode
+        processed_frame, pred_payload = global_classifier.process_frame(
+            img, mode=requested_mode
+        )
         latest_prediction = pred_payload
         label = pred_payload.get("label")
         confidence = pred_payload.get("confidence", 0.0)

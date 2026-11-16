@@ -7,8 +7,8 @@ import '../models/conversation.dart';
 import '../widgets/connectivity_badge.dart';
 import '../widgets/history_tile.dart';
 
-const Color _kAppBlue = Color(0xFF0138FF);
-const Color _kAppYellow = Color(0xFFFFC801);
+const Color _kAppBlue = Color(0xFF2D5FB8);
+const Color _kAppYellow = Color(0xFFF4C95D);
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -134,7 +134,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFDC2626)),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Clear All'),
           ),
@@ -243,7 +245,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      _kAppBlue.withValues(alpha: isDark ? 0.30 : 0.20),
+                      _kAppBlue.withValues(alpha: isDark ? 0.16 : 0.08),
                       _kAppBlue.withValues(alpha: 0.0),
                     ],
                   ),
@@ -263,7 +265,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      _kAppYellow.withValues(alpha: isDark ? 0.20 : 0.18),
+                      _kAppYellow.withValues(alpha: isDark ? 0.10 : 0.07),
                       _kAppYellow.withValues(alpha: 0.0),
                     ],
                   ),
@@ -277,95 +279,110 @@ class _HistoryScreenState extends State<HistoryScreen> {
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _loadError != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24.0),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.error_outline_rounded, size: 48, color: Colors.redAccent),
-                              const SizedBox(height: 12),
-                              Text('Could not load history: $_loadError', textAlign: TextAlign.center),
-                              const SizedBox(height: 16),
-                              ElevatedButton(
-                                onPressed: _loadHistory,
-                                child: const Text('Retry'),
-                              ),
-                            ],
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.error_outline_rounded,
+                            size: 48,
+                            color: Colors.redAccent,
                           ),
-                        ),
-                      )
-                    : _history.isEmpty
-                        ? _buildEmptyState(isDark)
-                        : RefreshIndicator(
-                            onRefresh: _onRefresh,
-                            child: ListView.builder(
-                              controller: _scrollController,
-                              physics: const BouncingScrollPhysics(),
-                              padding: const EdgeInsets.only(top: 8, bottom: 24),
-                              itemCount: _history.length + (_hasMoreHistory ? 1 : 0),
-                              itemBuilder: (context, index) {
-                                if (index >= _history.length) {
-                                  return Padding(
-                                    padding: const EdgeInsets.all(16),
-                                    child: Center(
-                                      child: _isLoadingMore
-                                          ? const CircularProgressIndicator()
-                                          : const SizedBox.shrink(),
-                                    ),
-                                  );
-                                }
-                                final conversation = _history[index];
-                                return Dismissible(
-                                  key: ValueKey(conversation.id),
-                                  direction: DismissDirection.endToStart,
-                                  background: Container(
-                                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.redAccent.withValues(alpha: 0.85),
-                                      borderRadius: BorderRadius.circular(18),
-                                    ),
-                                    alignment: Alignment.centerRight,
-                                    padding: const EdgeInsets.only(right: 20),
-                                    child: const Icon(
-                                      Icons.delete_rounded,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                  confirmDismiss: (direction) async {
-                                    return await showDialog<bool>(
-                                      context: context,
-                                      builder: (context) => AlertDialog(
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(20),
-                                        ),
-                                        title: const Text('Delete Conversation', style: TextStyle(fontWeight: FontWeight.w800)),
-                                        content: Text('Delete "${conversation.text}"?'),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () => Navigator.pop(context, false),
-                                            child: const Text('Cancel'),
-                                          ),
-                                          FilledButton(
-                                            style: FilledButton.styleFrom(
-                                              backgroundColor: Colors.redAccent,
-                                            ),
-                                            onPressed: () => Navigator.pop(context, true),
-                                            child: const Text('Delete'),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
-                                  onDismissed: (_) => _deleteConversation(conversation),
-                                  child: HistoryTile(
-                                    conversation: conversation,
-                                    onSpeak: () => _speakConversation(conversation),
-                                  ),
-                                );
-                              },
+                          const SizedBox(height: 12),
+                          Text(
+                            'Could not load history: $_loadError',
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: _loadHistory,
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : _history.isEmpty
+                ? _buildEmptyState(isDark)
+                : RefreshIndicator(
+                    onRefresh: _onRefresh,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      physics: const BouncingScrollPhysics(),
+                      padding: const EdgeInsets.only(top: 8, bottom: 24),
+                      itemCount: _history.length + (_hasMoreHistory ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index >= _history.length) {
+                          return Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Center(
+                              child: _isLoadingMore
+                                  ? const CircularProgressIndicator()
+                                  : const SizedBox.shrink(),
+                            ),
+                          );
+                        }
+                        final conversation = _history[index];
+                        return Dismissible(
+                          key: ValueKey(conversation.id),
+                          direction: DismissDirection.endToStart,
+                          background: Container(
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent.withValues(alpha: 0.85),
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.only(right: 20),
+                            child: const Icon(
+                              Icons.delete_rounded,
+                              color: Colors.white,
                             ),
                           ),
+                          confirmDismiss: (direction) async {
+                            return await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                title: const Text(
+                                  'Delete Conversation',
+                                  style: TextStyle(fontWeight: FontWeight.w800),
+                                ),
+                                content: Text('Delete "${conversation.text}"?'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: Colors.redAccent,
+                                    ),
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    child: const Text('Delete'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                          onDismissed: (_) => _deleteConversation(conversation),
+                          child: HistoryTile(
+                            conversation: conversation,
+                            onSpeak: () => _speakConversation(conversation),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
           ),
         ],
       ),
@@ -425,7 +442,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     style: TextStyle(
                       fontSize: 13,
                       height: 1.4,
-                      color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                      color: isDark
+                          ? const Color(0xFF94A3B8)
+                          : const Color(0xFF64748B),
                     ),
                     textAlign: TextAlign.center,
                   ),

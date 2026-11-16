@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 class AppTheme {
   // Complementary brand palette
-  static const Color kPrimaryBlue = Color(0xFF0138FF);
-  static const Color kDeepBlue = Color(0xFF002BB5);
-  static const Color kSunYellow = Color(0xFFFFC801);
-  static const Color kSunYellowDark = Color(0xFFD99B00);
+  static const Color kPrimaryBlue = Color(0xFF2D5FB8);
+  static const Color kDeepBlue = Color(0xFF1E3A8A);
+  static const Color kSunYellow = Color(0xFFF4C95D);
+  static const Color kSunYellowDark = Color(0xFF9A6700);
 
   // Surface and neutral colors
   static const Color kLightBg = Color(0xFFF1F5F9);
@@ -64,7 +64,9 @@ class AppTheme {
           backgroundColor: kPrimaryBlue,
           foregroundColor: Colors.white,
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
         ),
@@ -73,7 +75,9 @@ class AppTheme {
         style: FilledButton.styleFrom(
           backgroundColor: kPrimaryBlue,
           foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
         ),
@@ -108,9 +112,7 @@ class AppTheme {
           return const IconThemeData(color: Color(0xFF64748B), size: 22);
         }),
       ),
-      drawerTheme: const DrawerThemeData(
-        backgroundColor: Colors.white,
-      ),
+      drawerTheme: const DrawerThemeData(backgroundColor: Colors.white),
       dividerTheme: const DividerThemeData(
         color: Color(0xFFE2E8F0),
         thickness: 1,
@@ -125,7 +127,7 @@ class AppTheme {
       colorScheme: ColorScheme.fromSeed(
         seedColor: kPrimaryBlue,
         brightness: Brightness.dark,
-        primary: const Color(0xFF3B82F6),
+        primary: const Color(0xFF7DA7F7),
         onPrimary: Colors.white,
         primaryContainer: const Color(0xFF1E3A8A),
         onPrimaryContainer: const Color(0xFFDBEAFE),
@@ -168,7 +170,9 @@ class AppTheme {
           backgroundColor: kPrimaryBlue,
           foregroundColor: Colors.white,
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
         ),
@@ -177,7 +181,9 @@ class AppTheme {
         style: FilledButton.styleFrom(
           backgroundColor: kPrimaryBlue,
           foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
         ),
@@ -212,13 +218,8 @@ class AppTheme {
           return const IconThemeData(color: Color(0xFF94A3B8), size: 22);
         }),
       ),
-      drawerTheme: const DrawerThemeData(
-        backgroundColor: Color(0xFF0E1626),
-      ),
-      dividerTheme: const DividerThemeData(
-        color: kDarkBorder,
-        thickness: 1,
-      ),
+      drawerTheme: const DrawerThemeData(backgroundColor: Color(0xFF0E1626)),
+      dividerTheme: const DividerThemeData(color: kDarkBorder, thickness: 1),
     );
   }
 }
