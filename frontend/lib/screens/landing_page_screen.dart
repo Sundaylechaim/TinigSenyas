@@ -3,9 +3,7 @@ import 'package:provider/provider.dart';
 import '../main.dart';
 import '../providers/theme_provider.dart';
 import '../theme/app_theme.dart';
-import 'sign_to_text_screen.dart';
-import 'speech_to_text_screen.dart';
-import 'text_to_sign_screen.dart';
+import 'settings_screen.dart';
 
 const Color _kAppBlue = AppTheme.kPrimaryBlue;
 const Color _kAppBlueDark = AppTheme.kDeepBlue;
@@ -22,32 +20,30 @@ class LandingPageScreen extends StatefulWidget {
 class _LandingPageScreenState extends State<LandingPageScreen> {
   bool _isTagalog = true;
 
-  void _openAllTools(BuildContext context) {
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-      return;
-    }
+  void _openAllTools(BuildContext context, {int initialIndex = 0}) {
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+      MaterialPageRoute(
+        builder: (_) => MainNavigationScreen(initialIndex: initialIndex),
+      ),
     );
   }
 
   void _openSignToText(BuildContext context) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const SignToTextScreen()));
+    _openAllTools(context, initialIndex: 1);
   }
 
   void _openSpeechToText(BuildContext context) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const SpeechToTextScreen()));
+    _openAllTools(context, initialIndex: 3);
   }
 
   void _openFslDictionary(BuildContext context) {
+    _openAllTools(context, initialIndex: 2);
+  }
+
+  void _openSettings(BuildContext context) {
     Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const TextToSignScreen()));
+    ).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
   }
 
   @override
@@ -78,22 +74,30 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (!compactHeader) ...[
-              Image.asset(
-                'assets/images/logo.png',
-                width: 30,
-                height: 30,
-                fit: BoxFit.contain,
-              ),
-              const SizedBox(width: 8),
-            ],
-            const Text(
-              'TinigSenyas',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 18,
-                letterSpacing: -0.4,
+            Image.asset(
+              'assets/images/logo.png',
+              key: const Key('landing_brand_logo'),
+              width: compactHeader ? 25 : 30,
+              height: compactHeader ? 30 : 36,
+              fit: BoxFit.contain,
+              errorBuilder: (_, _, _) => Icon(
+                Icons.sign_language_rounded,
                 color: _kAppBlue,
+                size: compactHeader ? 24 : 28,
+              ),
+            ),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                'TinigSenyas',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: compactHeader ? 16 : 18,
+                  letterSpacing: -0.4,
+                  color: _kAppBlue,
+                ),
               ),
             ),
           ],
@@ -101,6 +105,12 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
         actions: [
           _buildLanguageSwitcher(),
           const SizedBox(width: 2),
+          IconButton(
+            key: const Key('landing_settings_button'),
+            tooltip: _isTagalog ? 'Mga Setting' : 'Settings',
+            icon: const Icon(Icons.settings_outlined, size: 20),
+            onPressed: () => _openSettings(context),
+          ),
           IconButton(
             tooltip: isDark ? 'Light mode' : 'Dark mode',
             icon: Icon(
@@ -305,8 +315,62 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.18),
+                  ),
+                ),
+                child: Image.asset(
+                  'assets/images/logo.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, _, _) => const Icon(
+                    Icons.sign_language_rounded,
+                    color: Colors.white,
+                    size: 32,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'TINIGSENYAS',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      _isTagalog
+                          ? 'Komunikasyong may FSL, boses at teksto'
+                          : 'FSL, voice and text for daily connection',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.78),
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(20),
@@ -324,9 +388,9 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                   'FILIPINO SIGN LANGUAGE',
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.94),
-                    fontSize: 10,
+                    fontSize: 9,
                     fontWeight: FontWeight.w800,
-                    letterSpacing: 0.55,
+                    letterSpacing: 0.25,
                   ),
                 ),
               ],
@@ -374,6 +438,76 @@ class _LandingPageScreenState extends State<LandingPageScreen> {
                 _buildSecondaryHeroButton(context),
               ],
             ),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              height: 86,
+              color: Colors.white.withValues(alpha: 0.10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 104,
+                    height: 86,
+                    child: Image.asset(
+                      'assets/sign_animations/kamusta_ka.gif',
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const Center(
+                        child: Icon(
+                          Icons.sign_language_rounded,
+                          color: Colors.white,
+                          size: 32,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _isTagalog
+                                ? 'Tingnan sa galaw'
+                                : 'See FSL in motion',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            _isTagalog
+                                ? 'Halimbawa: “Kamusta ka”'
+                                : 'Example sign: “Kamusta ka”',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.78),
+                              fontSize: 11,
+                              height: 1.3,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(right: 12),
+                    child: Icon(
+                      Icons.play_circle_fill_rounded,
+                      color: _kAppYellow,
+                      size: 24,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );

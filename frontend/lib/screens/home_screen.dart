@@ -393,11 +393,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        'Choose how to communicate',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: textColor,
+                      Expanded(
+                        child: Text(
+                          'Choose how to communicate',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: textColor,
+                          ),
                         ),
                       ),
                     ],
@@ -572,17 +576,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Row(
                     children: [
-                      Text(
-                        '$timeGreeting!',
-                        style: TextStyle(
-                          fontSize: 25,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.5,
-                          color: textColor,
+                      Flexible(
+                        child: Text(
+                          '$timeGreeting!',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: MediaQuery.sizeOf(context).width < 400
+                                ? 20
+                                : 25,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.5,
+                            color: textColor,
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      const Text('👋', style: TextStyle(fontSize: 22)),
+                      const SizedBox(width: 4),
+                      const Text('👋', style: TextStyle(fontSize: 20)),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -632,14 +642,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: subtextColor,
                 ),
                 const SizedBox(width: 7),
-                Text(
-                  settingsService.saveHistoryEnabled
-                      ? 'Conversation history is on'
-                      : 'Private mode is on',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: subtextColor,
+                Flexible(
+                  child: Text(
+                    settingsService.saveHistoryEnabled
+                        ? 'Conversation history is on'
+                        : 'Private mode is on',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: subtextColor,
+                    ),
                   ),
                 ),
               ],
@@ -804,32 +818,34 @@ class _PrimaryTranslationCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 14),
                     // Action Button Pill
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 8,
+                    SizedBox(
+                      width: double.infinity,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: accentColor == _kAppYellow
+                              ? (isDark
+                                    ? _kAppYellow.withValues(alpha: 0.25)
+                                    : const Color(0xFFFFFBEB))
+                              : (isDark
+                                    ? _kAppBlue.withValues(alpha: 0.25)
+                                    : const Color(0xFFEFF6FF)),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: accentColor.withValues(alpha: 0.35),
+                            width: 1,
                           ),
-                          decoration: BoxDecoration(
-                            color: accentColor == _kAppYellow
-                                ? (isDark
-                                      ? _kAppYellow.withValues(alpha: 0.25)
-                                      : const Color(0xFFFFFBEB))
-                                : (isDark
-                                      ? _kAppBlue.withValues(alpha: 0.25)
-                                      : const Color(0xFFEFF6FF)),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: accentColor.withValues(alpha: 0.35),
-                              width: 1,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
                                 actionText,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w800,
@@ -842,22 +858,22 @@ class _PrimaryTranslationCard extends StatelessWidget {
                                             : _kAppBlue),
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              Icon(
-                                Icons.arrow_forward_rounded,
-                                size: 14,
-                                color: isDark
-                                    ? (accentColor == _kAppYellow
-                                          ? _kAppYellow
-                                          : const Color(0xFF93C5FD))
-                                    : (accentColor == _kAppYellow
-                                          ? const Color(0xFFB45309)
-                                          : _kAppBlue),
-                              ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 14,
+                              color: isDark
+                                  ? (accentColor == _kAppYellow
+                                        ? _kAppYellow
+                                        : const Color(0xFF93C5FD))
+                                  : (accentColor == _kAppYellow
+                                        ? const Color(0xFFB45309)
+                                        : _kAppBlue),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ],
                 ),

@@ -20,7 +20,9 @@ import '../widgets/fsl_guide_sheet.dart';
 import '../services/word_prediction_service.dart';
 import '../services/settings_service.dart';
 import '../services/model_updater.dart';
+import '../services/sign_animation_catalog.dart';
 import '../services/recognition/recognition_service.dart' show RecognitionMode;
+import '../widgets/gesture_motion_replay.dart';
 import 'text_to_sign_screen.dart';
 
 const Color _kAppBlue = Color(0xFF2D5FB8);
@@ -38,6 +40,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   late CameraService _cameraService;
   late TtsService _ttsService;
   SignResult? _currentPrediction;
+  SignResult? _lastRecognizedSign;
   bool _isCheckingPermission = true;
   bool _hasPermission = false;
   bool _isPermanentlyDenied = false;
@@ -55,6 +58,10 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   StreamSubscription<CameraImage>? _frameSubscription;
   StreamSubscription<List<List<Offset>>>? _landmarksSubscription;
   List<List<Offset>> _liveLandmarks = [];
+  final List<List<List<Offset>>> _recentLandmarkFrames = [];
+  List<List<List<Offset>>> _gestureReplayFrames = const [];
+  Set<String> _availableAnimationSlugs = const {};
+  Timer? _gestureReplayTimer;
   bool _isCheckingModelUpdate = false;
   RecognitionMode _currentMode = RecognitionMode.auto;
 
@@ -106,17 +113,21 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     _cameraService = CameraService();
     _ttsService = context.read<TtsService>();
     _recognitionProvider = context.read<RecognitionProvider>();
+    unawaited(_loadSignAnimationCatalog());
     _predictionSubscription = _recognitionProvider!.predictions.listen((
       prediction,
     ) {
       if (mounted) {
-        if (_currentPrediction?.label != prediction.label) {
+        final labelChanged = _currentPrediction?.label != prediction.label;
+        if (labelChanged) {
           // Tactile haptic feedback for Deaf / Hard-of-Hearing users
           HapticFeedback.mediumImpact();
         }
         setState(() {
           _currentPrediction = prediction;
+          _lastRecognizedSign = prediction;
         });
+        if (labelChanged) _scheduleGestureReplay(prediction.label);
         _handlePredictionAssembly(prediction);
       }
     });
@@ -130,7 +141,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
         setState(() {
           _isPaused = paused;
           if (paused) {
+            _snapshotGestureReplay();
             _currentPrediction = null;
+            _recentLandmarkFrames.clear();
           }
         });
       }
@@ -139,7 +152,14 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     _landmarksSubscription = _recognitionProvider?.landmarkPointsStream?.listen(
       (hands) {
         if (mounted) {
-          setState(() => _liveLandmarks = hands);
+          final frame = hands
+              .map((hand) => List<Offset>.unmodifiable(hand))
+              .toList(growable: false);
+          _recentLandmarkFrames.add(frame);
+          if (_recentLandmarkFrames.length > 42) {
+            _recentLandmarkFrames.removeAt(0);
+          }
+          setState(() => _liveLandmarks = frame);
         }
       },
     );
@@ -157,6 +177,42 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     }
 
     _updateWakelock(true);
+  }
+
+  Future<void> _loadSignAnimationCatalog() async {
+    try {
+      final animations = await SignAnimationCatalog.load();
+      if (!mounted) return;
+      setState(() => _availableAnimationSlugs = animations);
+    } catch (error) {
+      debugPrint('Could not load FSL animation catalog: $error');
+    }
+  }
+
+  void _scheduleGestureReplay(String label) {
+    _gestureReplayTimer?.cancel();
+    _gestureReplayTimer = Timer(const Duration(milliseconds: 320), () {
+      if (!mounted || _currentPrediction?.label != label) return;
+      setState(_snapshotGestureReplay);
+    });
+  }
+
+  void _snapshotGestureReplay() {
+    final frames = List<List<List<Offset>>>.unmodifiable(_recentLandmarkFrames);
+    if (frames.where((frame) => frame.isNotEmpty).length >= 2) {
+      _gestureReplayFrames = frames;
+    }
+  }
+
+  double get _landmarkFrameAspectRatio {
+    final previewSize = _cameraService.controller?.value.previewSize;
+    if (previewSize == null) return 1;
+    final isRotated =
+        !kIsWeb && MediaQuery.orientationOf(context) == Orientation.portrait;
+    final frameWidth = isRotated ? previewSize.height : previewSize.width;
+    final frameHeight = isRotated ? previewSize.width : previewSize.height;
+    if (frameHeight <= 0) return 1;
+    return frameWidth / frameHeight;
   }
 
   Future<void> _updateWakelock(bool enable) async {
@@ -854,6 +910,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
 
   @override
   void dispose() {
+    _gestureReplayTimer?.cancel();
     try {
       WakelockPlus.disable();
     } catch (_) {}
@@ -1832,6 +1889,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
         _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final confidence = _currentPrediction?.confidence ?? 0.0;
     final isConfidenceHigh = confidence >= 0.75;
+    final animationPrediction = isPaused
+        ? _lastRecognizedSign
+        : _currentPrediction;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
@@ -2058,6 +2118,10 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                 ],
               ),
               const SizedBox(height: 16),
+              if (animationPrediction != null) ...[
+                _buildPredictionAnimation(isDark, animationPrediction),
+                const SizedBox(height: 12),
+              ],
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -2112,6 +2176,120 @@ class _SignToTextScreenState extends State<SignToTextScreen>
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPredictionAnimation(bool isDark, SignResult prediction) {
+    final animationAsset = SignAnimationCatalog.assetForLabel(
+      _availableAnimationSlugs,
+      prediction.label,
+    );
+    final hasMotionReplay = _gestureReplayFrames.isNotEmpty;
+    final isLetter = RegExp(
+      r'^(?:[A-ZÑ]|NG)$',
+      caseSensitive: false,
+    ).hasMatch(prediction.label.trim());
+    if (animationAsset == null && !hasMotionReplay && !isLetter) {
+      return const SizedBox.shrink();
+    }
+
+    final cardColor = isDark
+        ? const Color(0xFF111C31)
+        : const Color(0xFFF2F6FC);
+    final borderColor = isDark
+        ? const Color(0xFF2A4168)
+        : const Color(0xFFD7E3F4);
+
+    return Container(
+      height: 96,
+      padding: const EdgeInsets.all(7),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              width: 96,
+              height: 82,
+              child: ColoredBox(
+                color: isDark ? const Color(0xFF0A1221) : Colors.white,
+                child: animationAsset != null
+                    ? Image.asset(
+                        animationAsset,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, _, _) => const Icon(
+                          Icons.movie_filter_outlined,
+                          color: _kAppBlue,
+                        ),
+                      )
+                    : hasMotionReplay
+                    ? GestureMotionReplay(
+                        frames: _gestureReplayFrames,
+                        sourceAspectRatio: _landmarkFrameAspectRatio,
+                      )
+                    : const Center(
+                        child: Icon(
+                          Icons.back_hand_outlined,
+                          color: _kAppBlue,
+                          size: 28,
+                        ),
+                      ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  animationAsset != null
+                      ? 'FSL sign animation'
+                      : isLetter
+                      ? 'Letter ${prediction.label} · motion replay'
+                      : 'Signer motion replay',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isDark ? Colors.white : const Color(0xFF172033),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  animationAsset != null
+                      ? 'Animated reference · works offline'
+                      : hasMotionReplay
+                      ? 'Replay of the tracked hand motion'
+                      : 'Tracking hand motion for replay',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isDark
+                        ? const Color(0xFF9FB1CC)
+                        : const Color(0xFF64748B),
+                    fontSize: 11,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(
+            Icons.play_circle_fill_rounded,
+            color: _kAppBlue,
+            size: 25,
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
     );
   }

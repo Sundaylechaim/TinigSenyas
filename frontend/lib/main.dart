@@ -15,6 +15,7 @@ import 'screens/history_screen.dart';
 import 'screens/speech_to_text_screen.dart';
 import 'screens/sign_to_text_screen.dart';
 import 'screens/text_to_sign_screen.dart';
+import 'screens/settings_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -119,6 +120,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       2 => const TextToSignScreen(),
       3 => const SpeechToTextScreen(),
       4 => const HistoryScreen(),
+      5 => const SettingsScreen(),
       _ => const SizedBox.shrink(),
     };
   }
@@ -158,7 +160,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       child: Scaffold(
         body: IndexedStack(
           index: _currentIndex,
-          children: List.generate(5, _screenForTab),
+          children: List.generate(6, _screenForTab),
         ),
         bottomNavigationBar: Container(
           decoration: BoxDecoration(
@@ -199,6 +201,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                 icon: Icon(Icons.history_outlined),
                 selectedIcon: Icon(Icons.history_rounded),
                 label: 'History',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings_rounded),
+                label: 'Settings',
               ),
             ],
           ),

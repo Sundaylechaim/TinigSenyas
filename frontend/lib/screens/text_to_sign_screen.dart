@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -5,25 +6,29 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import '../services/sign_animation_catalog.dart';
 import '../services/tts_service.dart';
+import 'settings_screen.dart';
 
 const Color _kSignBlue = Color(0xFF2D5FB8);
-const String _kAnimationBaseUrl =
-    'https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/fsl-animations/frontend/assets/sign_animations';
 
 class _SignSegment {
-  const _SignSegment({required this.label, required this.isSupported});
+  const _SignSegment({
+    required this.label,
+    required this.isSupported,
+    this.hasAnimation = false,
+  });
 
   final String label;
   final bool isSupported;
+  final bool hasAnimation;
 
-  String get animationUrl => '$_kAnimationBaseUrl/${_slug(label)}.gif';
+  String get animationAsset =>
+      'assets/sign_animations/${SignAnimationCatalog.slug(label)}.gif';
 }
 
 String _normalize(String value) =>
     value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9ñ]+'), ' ').trim();
-
-String _slug(String label) => _normalize(label).replaceAll(RegExp(r'\s+'), '_');
 
 class TextToSignScreen extends StatefulWidget {
   const TextToSignScreen({super.key, this.initialText = ''});
@@ -37,6 +42,7 @@ class TextToSignScreen extends StatefulWidget {
 class _TextToSignScreenState extends State<TextToSignScreen> {
   final TextEditingController _textController = TextEditingController();
   List<String> _labels = const [];
+  Set<String> _animationSlugs = const {};
   List<_SignSegment> _segments = const [];
   int _currentIndex = 0;
   bool _isLoadingLabels = true;
@@ -52,26 +58,8 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
 
   Future<void> _loadLabels() async {
     try {
-      String? rawLabels;
-      if (!kIsWeb) {
-        try {
-          final appDir = await getApplicationDocumentsDirectory();
-          final otaLabelsFile = File(
-            p.join(appDir.path, 'models', 'labels.txt'),
-          );
-          if (await otaLabelsFile.exists()) {
-            rawLabels = await otaLabelsFile.readAsString();
-          }
-        } catch (_) {
-          // Ignore unavailable path_provider (e.g. widget tests) and use bundled asset.
-        }
-      }
-      rawLabels ??= await rootBundle.loadString('assets/model/labels.txt');
-      final labels = rawLabels
-          .split(RegExp(r'\r?\n'))
-          .map((label) => label.trim())
-          .where((label) => label.isNotEmpty)
-          .toList();
+      final rawLabels = await rootBundle.loadString('assets/model/labels.txt');
+      final labels = _parseLabels(rawLabels);
       if (!mounted) return;
       final initialText = widget.initialText.trim();
       final initialSegments = initialText.isEmpty
@@ -88,6 +76,8 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
           _message = null;
         }
       });
+      unawaited(_loadAnimationCatalog());
+      if (!kIsWeb) unawaited(_refreshOtaLabels());
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -97,8 +87,58 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
     }
   }
 
-  List<_SignSegment> _resolveText(String text, [List<String>? labels]) {
+  Future<void> _loadAnimationCatalog() async {
+    try {
+      final animationSlugs = await SignAnimationCatalog.load();
+      if (!mounted) return;
+      setState(() {
+        _animationSlugs = animationSlugs;
+        final text = _textController.text.trim();
+        if (text.isNotEmpty) {
+          _segments = _resolveText(text, _labels, animationSlugs);
+        }
+      });
+    } catch (_) {
+      // Vocabulary lookup remains usable if the optional animation index fails.
+    }
+  }
+
+  List<String> _parseLabels(String rawLabels) => rawLabels
+      .split(RegExp(r'\r?\n'))
+      .map((label) => label.trim())
+      .where((label) => label.isNotEmpty)
+      .toList();
+
+  Future<void> _refreshOtaLabels() async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final otaLabelsFile = File(p.join(appDir.path, 'models', 'labels.txt'));
+      if (!await otaLabelsFile.exists()) return;
+      final labels = _parseLabels(await otaLabelsFile.readAsString());
+      if (!mounted || labels.isEmpty) return;
+
+      setState(() {
+        _labels = labels;
+        final text = _textController.text.trim();
+        if (text.isNotEmpty) {
+          _segments = _resolveText(text);
+          _currentIndex = _segments.indexWhere(
+            (segment) => segment.isSupported,
+          );
+        }
+      });
+    } catch (_) {
+      // The bundled vocabulary stays available when app storage cannot be read.
+    }
+  }
+
+  List<_SignSegment> _resolveText(
+    String text, [
+    List<String>? labels,
+    Set<String>? animationSlugs,
+  ]) {
     final activeLabels = labels ?? _labels;
+    final activeAnimations = animationSlugs ?? _animationSlugs;
     final tokens = _normalize(text).split(RegExp(r'\s+'))
       ..removeWhere((token) => token.isEmpty);
     final labelTokens = <String, List<String>>{
@@ -133,7 +173,15 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
         result.add(_SignSegment(label: tokens[index], isSupported: false));
         index++;
       } else {
-        result.add(_SignSegment(label: match, isSupported: true));
+        result.add(
+          _SignSegment(
+            label: match,
+            isSupported: true,
+            hasAnimation: activeAnimations.contains(
+              SignAnimationCatalog.slug(match),
+            ),
+          ),
+        );
         index += labelTokens[match]!.length;
       }
     }
@@ -224,7 +272,18 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
         .length;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Type & Speak · FSL Signs')),
+      appBar: AppBar(
+        title: const Text('Type & Speak · FSL Signs'),
+        actions: [
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
@@ -422,34 +481,21 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
           ),
           clipBehavior: Clip.antiAlias,
           alignment: Alignment.center,
-          child: Image.network(
-            sign.animationUrl,
-            fit: BoxFit.contain,
-            gaplessPlayback: true,
-            loadingBuilder: (context, child, progress) {
-              if (progress == null) return child;
-              return const Center(child: CircularProgressIndicator());
-            },
-            errorBuilder: (context, error, stackTrace) => Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.wifi_off_rounded, size: 40, color: mutedColor),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Sign animation is unavailable. Connect to the internet and try again.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: mutedColor),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          child: sign.hasAnimation
+              ? Image.asset(
+                  sign.animationAsset,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                  errorBuilder: (context, error, stackTrace) =>
+                      _animationUnavailableNotice(mutedColor),
+                )
+              : _animationUnavailableNotice(mutedColor),
         ),
         const SizedBox(height: 8),
         Text(
-          'Recorded sign reference · internet required',
+          sign.hasAnimation
+              ? 'FSL sign reference · available offline'
+              : 'This word is in the FSL vocabulary; its animation is not available yet.',
           textAlign: TextAlign.center,
           style: TextStyle(color: mutedColor, fontSize: 12),
         ),
@@ -479,6 +525,22 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
       ],
     );
   }
+
+  Widget _animationUnavailableNotice(Color mutedColor) => Padding(
+    padding: const EdgeInsets.all(20),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.movie_filter_outlined, size: 40, color: mutedColor),
+        const SizedBox(height: 8),
+        Text(
+          'The sign animation is not available on this device yet.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: mutedColor),
+        ),
+      ],
+    ),
+  );
 
   int _previousSupportedIndex() {
     for (var i = _currentIndex - 1; i >= 0; i--) {

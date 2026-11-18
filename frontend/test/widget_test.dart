@@ -11,6 +11,10 @@ void main() {
   testWidgets('App opens the landing page with its main tools', (
     WidgetTester tester,
   ) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     SharedPreferences.setMockInitialValues({});
     final settings = SettingsService();
     await settings.init();
@@ -28,11 +32,19 @@ void main() {
         child: const TinigSenyasApp(),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
 
     expect(find.text('TinigSenyas'), findsWidgets);
+    expect(find.byKey(const Key('landing_brand_logo')), findsOneWidget);
+    expect(find.byKey(const Key('landing_settings_button')), findsOneWidget);
     expect(find.text('Mas madaling magkaintindihan.'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Senyas sa teksto at boses'),
+      200,
+    );
     expect(find.text('Senyas sa teksto at boses'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Boses sa live caption'), 200);
     expect(find.text('Boses sa live caption'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Mag-type ng mensahe'), 200);
     expect(find.text('Mag-type ng mensahe'), findsOneWidget);
@@ -64,14 +76,16 @@ void main() {
         child: const TinigSenyasApp(),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
 
     expect(
       Theme.of(tester.element(find.text('TinigSenyas').first)).brightness,
       Brightness.light,
     );
     await tester.tap(find.byTooltip('Dark mode'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
 
     expect(
       Theme.of(tester.element(find.text('TinigSenyas').first)).brightness,

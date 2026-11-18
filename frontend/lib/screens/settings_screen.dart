@@ -1394,9 +1394,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _showError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    });
   }
 
   Future<void> _clearHistory() async {
@@ -1494,13 +1497,17 @@ class _SectionHeader extends StatelessWidget {
             Icon(icon, size: 16, color: accentColor),
             const SizedBox(width: 6),
           ],
-          Text(
-            title.toUpperCase(),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.6,
-              color: accentColor,
+          Expanded(
+            child: Text(
+              title.toUpperCase(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.6,
+                color: accentColor,
+              ),
             ),
           ),
         ],
