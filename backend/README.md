@@ -35,6 +35,7 @@ Once the backend is running, open your browser to view the interactive documenta
 ### 3. Over-The-Air (OTA) Updates (Chapter 3 Specification)
 * `GET /api/v1/ota/manifest`: Returns model versioning, SHA-256 integrity hash, and download URL for the quantized ST-GCN mobile package.
 * `GET /api/v1/ota/vocabulary`: Asynchronously synchronizes validated FSL transactional phrases directly into the mobile SQLite database without disrupting offline translation.
+* Model version `1.2.2` uses the connected pose-and-hand ST-GCN candidate. It showed a modest gain on a sample-level split, so validate it with Deaf FSL users before relying on its phrase results.
 
 ### 4. Alpha Camera Tracking Stream
 * `GET /video_feed`: Streams webcam frames with real-time MediaPipe skeletal landmark overlays for alpha testing.
@@ -55,7 +56,7 @@ the API, but the defaults are for single-machine development only.
 | `ADMIN_API_TOKEN` | *(unset)* | Bearer token for `POST /api/v1/dmca/takedown` and `/api/v1/dmca/ban_user`. When unset those endpoints answer 503 rather than accepting anonymous content removal. |
 | `OTA_MODEL_URL` | this repo's `releases/latest/download/fsl_model.tflite` | Where installed apps download a newer model. |
 | `OTA_MODEL_SHA256` | hash of the bundled `fsl_model.tflite` | Integrity check the app verifies before installing. Must be regenerated (`sha256sum`) whenever the model changes. |
-| `OTA_MODEL_VERSION` | `1.0.1` | Only offer an update when this is newer than the version stored on the device. |
+| `OTA_MODEL_VERSION` | `1.2.2` | Only offer an update when this is newer than the version stored on the device. |
 | `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | *(unset)* | Enables the Azure Cognitive Services fallback; without both, Edge-TTS is used. |
 | `APP_BASE_URL` / `PHYSICAL_POSTAL_ADDRESS` | `https://tinigsenyas.org` | CAN-SPAM footer values in `email_service.py`. |
 

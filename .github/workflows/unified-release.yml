@@ -211,12 +211,21 @@ jobs:
           name: ios-dist
           path: release_assets
 
+      - name: Add OTA model asset
+        run: cp frontend/assets/model/fsl_model.tflite release_assets/fsl_model.tflite
+
       - name: Generate Release Body
         run: |
           cat << 'EOF' > release_body.md
           # TinigSenyas Mobile App Release
 
           Choose your platform below to download and install TinigSenyas:
+
+          ---
+
+          ### FSL phrase model
+          - Model OTA **1.2.2** is included and can be installed from the app's Settings screen.
+          - The connected ST-GCN candidate showed a modest gain on an internal sample-level split; signer-independent Deaf-user validation is still needed.
 
           ---
 
@@ -251,6 +260,7 @@ jobs:
           files: |
             release_assets/TinigSenyas-Android.apk
             release_assets/TinigSenyas-iOS.ipa
+            release_assets/fsl_model.tflite
           fail_on_unmatched_files: true
 
       - name: Upload Unified Package (on workflow_dispatch)

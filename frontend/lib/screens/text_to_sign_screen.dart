@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
+import '../services/tts_service.dart';
 
 const Color _kSignBlue = Color(0xFF2D5FB8);
 const String _kAnimationBaseUrl =
@@ -38,6 +40,7 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
   List<_SignSegment> _segments = const [];
   int _currentIndex = 0;
   bool _isLoadingLabels = true;
+  bool _isSpeaking = false;
   String? _message;
 
   @override
@@ -53,7 +56,9 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
       if (!kIsWeb) {
         try {
           final appDir = await getApplicationDocumentsDirectory();
-          final otaLabelsFile = File(p.join(appDir.path, 'models', 'labels.txt'));
+          final otaLabelsFile = File(
+            p.join(appDir.path, 'models', 'labels.txt'),
+          );
           if (await otaLabelsFile.exists()) {
             rawLabels = await otaLabelsFile.readAsString();
           }
@@ -154,6 +159,41 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
     });
   }
 
+  void _useQuickMessage(String message) {
+    _textController.value = TextEditingValue(
+      text: message,
+      selection: TextSelection.collapsed(offset: message.length),
+    );
+    setState(() {
+      _segments = const [];
+      _currentIndex = 0;
+      _message = null;
+    });
+  }
+
+  Future<void> _speakTypedMessage() async {
+    final text = _textController.text.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Type a message before speaking.')),
+      );
+      return;
+    }
+
+    setState(() => _isSpeaking = true);
+    try {
+      await context.read<TtsService>().speak(text);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not speak this message: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSpeaking = false);
+    }
+  }
+
   void _selectSign(int index) {
     if (index < 0 ||
         index >= _segments.length ||
@@ -184,21 +224,47 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
         .length;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Text to FSL Signs')),
+      appBar: AppBar(title: const Text('Type & Speak · FSL Signs')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
             Text(
-              'Type a Filipino word or phrase',
+              'Type a message to speak it aloud or preview available FSL signs',
               style: theme.textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.w800,
               ),
             ),
             const SizedBox(height: 6),
             Text(
-              'The app shows recorded FSL signs for words in its vocabulary. Unmatched words are marked as unavailable.',
+              'Use this when camera recognition is difficult. Sign previews are available for words in the FSL vocabulary; other typed words can still be spoken aloud.',
               style: theme.textTheme.bodyMedium?.copyWith(color: mutedColor),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Quick messages',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ActionChip(
+                  label: const Text('Kailangan ko ng tulong'),
+                  onPressed: () => _useQuickMessage('Kailangan ko ng tulong.'),
+                ),
+                ActionChip(
+                  label: const Text('Pakisulat ang sagot'),
+                  onPressed: () => _useQuickMessage('Pakisulat ang sagot.'),
+                ),
+                ActionChip(
+                  label: const Text('Salamat po'),
+                  onPressed: () => _useQuickMessage('Salamat po.'),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             TextField(
@@ -228,6 +294,22 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
+              onPressed: _isSpeaking ? null : _speakTypedMessage,
+              icon: _isSpeaking
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.volume_up_rounded),
+              label: Text(_isSpeaking ? 'Speaking…' : 'Speak message'),
+              style: FilledButton.styleFrom(
+                backgroundColor: _kSignBlue,
+                minimumSize: const Size.fromHeight(50),
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
               onPressed: _isLoadingLabels ? null : _preparePreview,
               icon: _isLoadingLabels
                   ? const SizedBox(
@@ -237,10 +319,12 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
                     )
                   : const Icon(Icons.sign_language_rounded),
               label: Text(
-                _isLoadingLabels ? 'Loading FSL signs…' : 'Preview signs',
+                _isLoadingLabels
+                    ? 'Loading FSL signs…'
+                    : 'Preview available FSL signs',
               ),
-              style: FilledButton.styleFrom(
-                backgroundColor: _kSignBlue,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _kSignBlue,
                 minimumSize: const Size.fromHeight(50),
               ),
             ),

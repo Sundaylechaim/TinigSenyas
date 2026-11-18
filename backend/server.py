@@ -138,7 +138,7 @@ _OTA_MODEL_URL = os.environ.get(
 )
 _OTA_MODEL_SHA256 = os.environ.get(
     "OTA_MODEL_SHA256",
-    "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
+    "4f5b8def4902dc79846420396285ca9c04078ea76ebd105b5247dc7f19a388e2",
 )
 _OTA_ALPHABET_URL = os.environ.get(
     "OTA_ALPHABET_URL",
@@ -156,7 +156,7 @@ _OTA_MEDICAL_SHA256 = os.environ.get(
     "OTA_MEDICAL_SHA256",
     "b0825c8fb7cc35fae8171ea5532fc75b247bb9cc1b62afd1fa4fbfb25cd4ab20",
 )
-_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.2.0")
+_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.2.2")
 
 
 @app.get("/api/v1/ota/manifest", response_model=ModelManifest, tags=["OTA Updates"])
@@ -169,7 +169,7 @@ async def get_model_manifest():
         url=_OTA_MODEL_URL,
         sha256=_OTA_MODEL_SHA256,
         min_app_version="1.0.0",
-        notes="Updated 28-class FSL alphabet fingerspelling model (A-Z, Ng, Ñ) and transactional ST-GCN gestures.",
+        notes="Connected pose and hand ST-GCN. Internal sample-level results improved slightly; signer-independent Deaf-user validation is still needed.",
         models=[
             ModelFileItem(
                 name="fsl_alphabet.tflite",

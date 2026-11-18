@@ -1,7 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/theme_provider.dart';
 import '../services/model_updater.dart';
 import '../services/settings_service.dart';
 import '../widgets/connectivity_badge.dart';
@@ -10,7 +9,6 @@ import 'sign_to_text_screen.dart';
 import 'speech_to_text_screen.dart';
 import 'text_to_sign_screen.dart';
 import 'settings_screen.dart';
-import 'landing_page_screen.dart';
 import 'history_screen.dart';
 
 const Color _kAppBlue = Color(0xFF2D5FB8);
@@ -26,26 +24,6 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  String _modelVersion = 'Not installed';
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSettings();
-  }
-
-  Future<void> _loadSettings() async {
-    final settings = context.read<SettingsService>();
-    _modelVersion = settings.modelVersion;
-    if (mounted) setState(() {});
-  }
-
-  void _openLandingPage(BuildContext context) {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const LandingPageScreen()));
-  }
-
   void _openDestination(BuildContext context, int tabIndex, Widget screen) {
     final selectTab = widget.onSelectTab;
     if (selectTab != null) {
@@ -60,7 +38,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final isDarkMode = theme.brightness == Brightness.dark;
     final settingsService = context.watch<SettingsService>();
-    final textScale = settingsService.textScaleFactor;
 
     final bgColor = isDarkMode
         ? const Color(0xFF090E1A)
@@ -160,20 +137,19 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
 
-      // ACCESSIBLE NAVIGATION DRAWER
+      // Essential navigation and support links.
       drawer: Drawer(
         backgroundColor: isDarkMode
-            ? const Color(0xFF0E1626).withValues(alpha: 0.96)
-            : Colors.white.withValues(alpha: 0.96),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            ? const Color(0xFF0E1626).withValues(alpha: 0.98)
+            : Colors.white,
+        child: SafeArea(
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
               DrawerHeader(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+                  horizontal: 20,
+                  vertical: 18,
                 ),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -190,12 +166,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.end,
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Real logo without circle/box wrapper
                     Image.asset(
                       'assets/images/logo.png',
-                      height: 40,
+                      height: 38,
                       fit: BoxFit.contain,
                       errorBuilder: (_, _, _) => const Icon(
                         Icons.sign_language_rounded,
@@ -203,195 +177,89 @@ class _HomeScreenState extends State<HomeScreen> {
                         size: 34,
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 10),
                     const Text(
-                      'TinigSenyas System',
+                      'TinigSenyas',
                       style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
                         color: Colors.white,
                         letterSpacing: -0.2,
                       ),
                     ),
                     Text(
-                      'Filipino Sign Language Assistant',
+                      'Everyday connection through FSL',
                       style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.86),
                       ),
                     ),
                   ],
                 ),
               ),
-
-              // Dark Mode Switch
-              SwitchListTile(
-                secondary: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: (isDarkMode ? _kAppYellow : _kAppBlue).withValues(
-                      alpha: 0.12,
-                    ),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    isDarkMode
-                        ? Icons.dark_mode_rounded
-                        : Icons.light_mode_rounded,
-                    color: isDarkMode ? _kAppYellow : _kAppBlue,
-                    size: 20,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+                child: Text(
+                  'COMMUNICATE',
+                  style: TextStyle(
+                    color: subtextColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
                   ),
                 ),
-                title: const Text(
-                  'Dark Mode',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.sign_language_rounded,
+                  color: _kAppBlue,
                 ),
-                value: isDarkMode,
-                onChanged: (val) {
-                  context.read<ThemeProvider>().setThemeMode(
-                    val ? ThemeMode.dark : ThemeMode.light,
-                  );
+                title: const Text('Sign to Text & Voice'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openDestination(context, 1, const SignToTextScreen());
                 },
               ),
-              const Divider(height: 1),
-
-              // Text Size Scale for Accessibility
+              ListTile(
+                leading: const Icon(Icons.mic_rounded, color: _kAppBlue),
+                title: const Text('Speech to Captions'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openDestination(context, 3, const SpeechToTextScreen());
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.menu_book_rounded, color: _kAppBlue),
+                title: const Text('Type, Speak & FSL Signs'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _openDestination(context, 2, const TextToSignScreen());
+                },
+              ),
+              const Divider(height: 12),
               Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16.0,
-                  vertical: 12.0,
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: _kAppBlue.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(
-                        Icons.format_size_rounded,
-                        color: _kAppBlue,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        'Text Size Scale',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '${(textScale * 100).toInt()}%',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                        color: subtextColor,
-                      ),
-                    ),
-                  ],
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                child: Text(
+                  'APP',
+                  style: TextStyle(
+                    color: subtextColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.8,
+                  ),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: Slider(
-                  activeColor: _kAppBlue,
-                  thumbColor: _kAppYellow,
-                  value: textScale,
-                  min: 0.8,
-                  max: 1.4,
-                  divisions: 6,
-                  label: '${(textScale * 100).toInt()}%',
-                  onChanged: (val) {
-                    settingsService.setTextScaleFactor(val);
-                  },
-                ),
-              ),
-              const Divider(height: 1),
-
-              // Direct Navigation Destinations
               ListTile(
                 leading: const Icon(Icons.history_rounded, color: _kAppBlue),
-                title: const Text(
-                  'Translation History',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-                subtitle: const Text(
-                  'View saved conversations & logs',
-                  style: TextStyle(fontSize: 12),
-                ),
+                title: const Text('Translation History'),
                 onTap: () {
                   Navigator.pop(context);
                   _openDestination(context, 4, const HistoryScreen());
                 },
               ),
               ListTile(
-                leading: const Icon(
-                  Icons.psychology_outlined,
-                  color: _kAppBlue,
-                ),
-                title: const Text(
-                  'FSL Model Status',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-                subtitle: Text(
-                  'Status: $_modelVersion',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.menu_book_rounded, color: _kAppBlue),
-                title: const Text(
-                  'FSL Guide & Reference',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-                subtitle: const Text(
-                  'Phrases, alphabet & tips',
-                  style: TextStyle(fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  showFslGuideSheet(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.explore_outlined, color: _kAppBlue),
-                title: const Text(
-                  'Welcome Guide & Tutorial',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-                subtitle: const Text(
-                  'Quick introduction to TinigSenyas',
-                  style: TextStyle(fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _openLandingPage(context);
-                },
-              ),
-              ListTile(
                 leading: const Icon(Icons.settings_outlined, color: _kAppBlue),
-                title: const Text(
-                  'System Settings',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-                subtitle: const Text(
-                  'Voice tuning & preferences',
-                  style: TextStyle(fontSize: 12),
-                ),
+                title: const Text('Settings'),
                 onTap: () {
                   Navigator.pop(context);
                   Navigator.push(
@@ -400,24 +268,45 @@ class _HomeScreenState extends State<HomeScreen> {
                   );
                 },
               ),
-              const Divider(height: 1),
+              const Divider(height: 12),
               ListTile(
                 leading: const Icon(
                   Icons.info_outline_rounded,
-                  color: Colors.grey,
+                  color: _kAppBlue,
                 ),
-                title: const Text(
-                  'About TinigSenyas',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
+                title: const Text('About TinigSenyas'),
                 onTap: () {
                   Navigator.pop(context);
                   showAboutDialog(
                     context: context,
                     applicationName: 'TinigSenyas',
                     applicationVersion: ModelUpdater.currentAppVersion,
+                    applicationIcon: const Icon(
+                      Icons.sign_language_rounded,
+                      color: _kAppBlue,
+                      size: 40,
+                    ),
                     applicationLegalese:
-                        'Filipino Sign Language e-Learning & Translation System',
+                        'Connecting communities through Filipino Sign Language.',
+                    children: [
+                      const SizedBox(height: 12),
+                      const Text(
+                        'TinigSenyas is a communication companion for Deaf and hearing people. It brings together recognition for supported Filipino Sign Language signs, live speech captions, and visual sign guides to make everyday conversations easier to share.',
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Created to support connection in homes, schools, and community services, TinigSenyas honors the language, expertise, and leadership of the Deaf community.',
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Sa Filipino',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Ang TinigSenyas ay katuwang sa komunikasyon ng mga Bingi at nakaririnig. Pinag-uugnay nito ang pagkilala sa mga FSL senyas na suportado ng app, live na caption mula sa pagsasalita, at mga visual na gabay sa senyas. Dinisenyo ito upang makatulong sa pang-araw-araw na usapan sa tahanan, paaralan, at mga serbisyo sa komunidad, habang kinikilala ang wika, kaalaman, at pamumuno ng komunidad ng mga Bingi.',
+                      ),
+                    ],
                   );
                 },
               ),
@@ -425,7 +314,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-
       // BODY WITH AMBIENT GLOW AND FLUID SPACING
       body: Stack(
         children: [
@@ -527,11 +415,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         'Translate Filipino Sign Language gestures in real time using your device camera.',
                     actionText: 'Open Camera Translation',
                     isDark: isDarkMode,
-                    onTap: () => _openDestination(
-                      context,
-                      1,
-                      const SignToTextScreen(),
-                    ),
+                    onTap: () =>
+                        _openDestination(context, 1, const SignToTextScreen()),
                   ),
 
                   const SizedBox(height: 16),
@@ -560,16 +445,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: Icons.chat_bubble_outline_rounded,
                     accentColor: const Color(0xFF10B981),
                     category: 'TYPE A MESSAGE',
-                    title: 'Text to FSL Signs',
+                    title: 'Type & Speak',
                     description:
-                        'Type a Filipino word or phrase and preview its available FSL sign clips.',
-                    actionText: 'Write a Message',
+                        'Type a message to speak it aloud, or preview available FSL sign clips.',
+                    actionText: 'Open Message Composer',
                     isDark: isDarkMode,
-                    onTap: () => _openDestination(
-                      context,
-                      2,
-                      const TextToSignScreen(),
-                    ),
+                    onTap: () =>
+                        _openDestination(context, 2, const TextToSignScreen()),
                   ),
 
                   const SizedBox(height: 24),

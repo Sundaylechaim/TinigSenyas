@@ -21,6 +21,7 @@ import '../services/word_prediction_service.dart';
 import '../services/settings_service.dart';
 import '../services/model_updater.dart';
 import '../services/recognition/recognition_service.dart' show RecognitionMode;
+import 'text_to_sign_screen.dart';
 
 const Color _kAppBlue = Color(0xFF2D5FB8);
 const Color _kAppYellow = Color(0xFFF4C95D);
@@ -815,6 +816,30 @@ class _SignToTextScreenState extends State<SignToTextScreen>
           ).showSnackBar(SnackBar(content: Text('Speech synthesis error: $e')));
         }
       }
+    }
+  }
+
+  Future<void> _openTypeAndSpeakFallback() async {
+    final initialText = [
+      _composedSentence.trim(),
+      _activeWordBuffer.trim(),
+    ].where((part) => part.isNotEmpty).join(' ');
+    final wasPaused = _isPaused;
+
+    if (!wasPaused) {
+      setState(() => _isPaused = true);
+      _recognitionProvider?.setPaused(true);
+    }
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => TextToSignScreen(initialText: initialText),
+      ),
+    );
+
+    if (mounted && !wasPaused) {
+      setState(() => _isPaused = false);
+      _recognitionProvider?.setPaused(false);
     }
   }
 
@@ -2069,6 +2094,20 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                     color: const Color(0xFF6366F1),
                   ),
                 ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _openTypeAndSpeakFallback,
+                  icon: const Icon(Icons.keyboard_alt_outlined, size: 18),
+                  label: const Text('Phrase missed? Type message & speak'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _kAppBlue,
+                    side: BorderSide(color: _kAppBlue.withValues(alpha: 0.45)),
+                    minimumSize: const Size.fromHeight(44),
+                  ),
+                ),
               ),
             ],
           ),

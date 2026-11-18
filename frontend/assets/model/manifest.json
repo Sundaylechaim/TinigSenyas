@@ -1,9 +1,9 @@
 {
-  "version": "1.2.1",
+  "version": "1.2.2",
   "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
-  "sha256": "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
+  "sha256": "4f5b8def4902dc79846420396285ca9c04078ea76ebd105b5247dc7f19a388e2",
   "min_app_version": "1.0.0",
-  "notes": "Synchronizes all three model label maps, including the 28-class FSL alphabet output order.",
+  "notes": "Connected pose and hand ST-GCN. Internal sample-level results improved slightly; signer-independent Deaf-user validation is still needed.",
   "models": [
     {
       "name": "fsl_alphabet.tflite",
@@ -13,7 +13,7 @@
     {
       "name": "fsl_model.tflite",
       "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
-      "sha256": "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4"
+      "sha256": "4f5b8def4902dc79846420396285ca9c04078ea76ebd105b5247dc7f19a388e2"
     },
     {
       "name": "fsl_medical.tflite",
