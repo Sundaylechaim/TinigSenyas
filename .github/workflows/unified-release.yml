@@ -95,10 +95,99 @@ jobs:
         working-directory: frontend
         run: flutter pub get
 
-      # A universal APK bundles 4 ABIs and measured 198 MB; per-ABI builds are ~55 MB.
-      - name: Build Release APKs (per ABI)
+      # Keep the private signing material in GitHub Actions secrets. Refuse to
+      # produce any distributable APK when a required secret is missing.
+      - name: Configure Android release signing
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          names = (
+              "ANDROID_RELEASE_KEYSTORE_BASE64",
+              "ANDROID_RELEASE_STORE_PASSWORD",
+              "ANDROID_RELEASE_KEY_ALIAS",
+              "ANDROID_RELEASE_KEY_PASSWORD",
+          )
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              raise SystemExit(
+                  "Missing Android release signing secrets: " + ", ".join(missing)
+              )
+
+          keystore = base64.b64decode(
+              os.environ["ANDROID_RELEASE_KEYSTORE_BASE64"], validate=True
+          )
+          if not keystore:
+              raise SystemExit("ANDROID_RELEASE_KEYSTORE_BASE64 decoded to an empty file")
+          android_dir = Path("frontend/android")
+          key_file = android_dir / "release-key.jks"
+          key_file.write_bytes(keystore)
+          key_file.chmod(0o600)
+
+          def escape_property(value):
+              escaped = []
+              for index, char in enumerate(value):
+                  code = ord(char)
+                  if char == "\\":
+                      escaped.append("\\\\")
+                  elif char in "\t\n\r\f":
+                      escaped.append({"\t": "\\t", "\n": "\\n", "\r": "\\r", "\f": "\\f"}[char])
+                  elif char in "=:#!" or (char == " " and index == 0):
+                      escaped.append("\\" + char)
+                  elif code < 0x20 or code > 0x7e:
+                      if code <= 0xffff:
+                          escaped.append(f"\\u{code:04x}")
+                      else:
+                          code -= 0x10000
+                          escaped.append(f"\\u{0xd800 + (code >> 10):04x}")
+                          escaped.append(f"\\u{0xdc00 + (code & 0x3ff):04x}")
+                  else:
+                      escaped.append(char)
+              return "".join(escaped)
+
+          properties = {
+              "storeFile": "../release-key.jks",
+              "storePassword": os.environ["ANDROID_RELEASE_STORE_PASSWORD"],
+              "keyAlias": os.environ["ANDROID_RELEASE_KEY_ALIAS"],
+              "keyPassword": os.environ["ANDROID_RELEASE_KEY_PASSWORD"],
+          }
+          key_properties = android_dir / "key.properties"
+          key_properties.write_text(
+              "".join(
+                  f"{key}={escape_property(value)}\n"
+                  for key, value in properties.items()
+              ),
+              encoding="ascii",
+          )
+          key_properties.chmod(0o600)
+          PY
+
+      # The published APK targets the ARM64 phones used for field testing.
+      - name: Build signed ARM64 release APK
         working-directory: frontend
-        run: flutter build apk --split-per-abi
+        run: flutter build apk --release --split-per-abi --target-platform=android-arm64
+
+      - name: Verify release APK signature and certificate
+        env:
+          EXPECTED_SIGNER_SHA256: bb4cdeacb147b3d7e6395bf7aa59c56a5e631da1be03cd52125f0edd3a3d6e70
+        run: |
+          set -euo pipefail
+          apk="frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$sdk_root"
+          apksigner="$(find "$sdk_root/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$apksigner"
+          signature_output=$("$apksigner" verify --verbose --print-certs "$apk")
+          printf '%s\n' "$signature_output"
+          printf '%s\n' "$signature_output" | grep -Fq "Signer #1 certificate SHA-256 digest: $EXPECTED_SIGNER_SHA256"
 
       - name: Prepare Android Binaries
         run: |
