@@ -23,7 +23,7 @@ void main() {
       await tester.pump();
       for (
         var i = 0;
-        i < 200 && find.text('1/1 supported').evaluate().isEmpty;
+        i < 200 && find.text('Preview available FSL signs').evaluate().isEmpty;
         i++
       ) {
         await tester.runAsync(
@@ -32,6 +32,7 @@ void main() {
         await tester.pump();
       }
 
+      await tester.scrollUntilVisible(find.text('Sign sequence'), 200);
       expect(find.text('1/1 supported'), findsOneWidget);
       expect(find.text('Kamusta ka'), findsAtLeastNWidgets(2));
     },
@@ -60,6 +61,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
+    await tester.scrollUntilVisible(
+      find.text('1/2 supported'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('1/2 supported'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Unavailable words are not translated in the animation.'),

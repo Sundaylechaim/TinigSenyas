@@ -34,6 +34,7 @@ void main() {
     expect(find.text('Mas madaling magkaintindihan.'), findsOneWidget);
     expect(find.text('Senyas sa teksto at boses'), findsOneWidget);
     expect(find.text('Boses sa live caption'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Mag-type ng mensahe'), 200);
     expect(find.text('Mag-type ng mensahe'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
