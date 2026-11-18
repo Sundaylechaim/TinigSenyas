@@ -32,7 +32,11 @@ void main() {
         await tester.pump();
       }
 
-      await tester.scrollUntilVisible(find.text('Sign sequence'), 200);
+      await tester.scrollUntilVisible(
+        find.text('Sign sequence'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('1/1 supported'), findsOneWidget);
       expect(find.text('Kamusta ka'), findsAtLeastNWidgets(2));
     },
