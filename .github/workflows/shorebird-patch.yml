@@ -11,7 +11,7 @@ on:
       track:
         description: Shorebird delivery track
         required: true
-        default: staging
+        default: stable
         type: choice
         options:
           - staging
