@@ -21,7 +21,11 @@ void main() {
         const MaterialApp(home: TextToSignScreen(initialText: 'Kamusta ka')),
       );
       await tester.pump();
-      for (var i = 0; i < 200 && find.text('1/1 supported').evaluate().isEmpty; i++) {
+      for (
+        var i = 0;
+        i < 200 && find.text('1/1 supported').evaluate().isEmpty;
+        i++
+      ) {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 25)),
         );
@@ -38,13 +42,19 @@ void main() {
   ) async {
     await tester.pumpWidget(const MaterialApp(home: TextToSignScreen()));
     await tester.pump();
-    for (var i = 0; i < 200 && find.text('Preview signs').evaluate().isEmpty; i++) {
-      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+    for (
+      var i = 0;
+      i < 200 && find.text('Preview available FSL signs').evaluate().isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
       await tester.pump();
     }
 
     await tester.enterText(find.byType(TextField), 'Kamusta unknownword');
-    await tester.tap(find.text('Preview signs'));
+    await tester.tap(find.text('Preview available FSL signs'));
     // Unfocus happens inside _preparePreview(); pump frames instead of
     // pumpAndSettle so any pending network image / cursor frame cannot hang.
     await tester.pump();
@@ -106,12 +116,12 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.scrollUntilVisible(find.text('Write a Message'), 200);
-      await tester.tap(find.text('Write a Message'));
+      await tester.tap(
+        find.descendant(of: navBar, matching: find.text('Type')),
+      );
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
 
-      expect(find.text('Type a Filipino word or phrase'), findsOneWidget);
+      expect(find.text('Type & Speak · FSL Signs'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       connectivity.dispose();

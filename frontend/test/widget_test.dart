@@ -8,7 +8,9 @@ import 'package:tinigsenyas/services/connectivity_service.dart';
 import 'package:tinigsenyas/services/settings_service.dart';
 
 void main() {
-  testWidgets('App loads home screen', (WidgetTester tester) async {
+  testWidgets('App opens the landing page with its main tools', (
+    WidgetTester tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     final settings = SettingsService();
     await settings.init();
@@ -28,16 +30,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // From landing page, navigate to dashboard to test the home screen
-    final appbarDashboardBtn = find.byKey(const Key('appbar_dashboard_button'));
-    if (appbarDashboardBtn.evaluate().isNotEmpty) {
-      await tester.tap(appbarDashboardBtn);
-      await tester.pumpAndSettle();
-    }
-
     expect(find.text('TinigSenyas'), findsWidgets);
-    expect(find.text('Sign to Text & Voice'), findsOneWidget);
-    expect(find.text('Speech to Text & Signs'), findsOneWidget);
+    expect(find.text('Mas madaling magkaintindihan.'), findsOneWidget);
+    expect(find.text('Senyas sa teksto at boses'), findsOneWidget);
+    expect(find.text('Boses sa live caption'), findsOneWidget);
+    expect(find.text('Mag-type ng mensahe'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     connectivity.dispose();
@@ -68,32 +65,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final appbarDashboardBtn = find.byKey(const Key('appbar_dashboard_button'));
-    if (appbarDashboardBtn.evaluate().isNotEmpty) {
-      await tester.tap(appbarDashboardBtn);
-      await tester.pumpAndSettle();
-    }
-
     expect(
       Theme.of(tester.element(find.text('TinigSenyas').first)).brightness,
       Brightness.light,
     );
-    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.tap(find.byTooltip('Dark mode'));
     await tester.pumpAndSettle();
 
-    final darkModeSwitch = tester.widget<SwitchListTile>(
-      find.byType(SwitchListTile).first,
-    );
-    expect(darkModeSwitch.value, isFalse);
-
-    await tester.tap(find.byType(SwitchListTile).first);
-    await tester.pumpAndSettle();
     expect(
-      tester.widget<SwitchListTile>(find.byType(SwitchListTile).first).value,
-      isTrue,
-    );
-    expect(
-      Theme.of(tester.element(find.text('Dark Mode'))).brightness,
+      Theme.of(tester.element(find.text('TinigSenyas').first)).brightness,
       Brightness.dark,
     );
 
