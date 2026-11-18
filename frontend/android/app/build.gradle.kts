@@ -59,6 +59,11 @@ android {
     }
 }
 
+dependencies {
+    // Match the MediaPipe Tasks Vision runtime used by hand_landmarker.
+    implementation("com.google.mediapipe:tasks-vision:1.0.0")
+}
+
 // Fail release packaging before AGP can silently sign with the shared debug key,
 // without preventing developers from building debug variants on a clean checkout.
 tasks.configureEach {

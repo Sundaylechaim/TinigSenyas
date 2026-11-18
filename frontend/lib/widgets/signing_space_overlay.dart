@@ -2,128 +2,94 @@ import 'package:flutter/material.dart';
 
 class SigningSpaceOverlay extends StatelessWidget {
   final bool showZoneGuides;
+  final bool showUpperBodyGuide;
+  final bool handsDetected;
 
-  const SigningSpaceOverlay({super.key, this.showZoneGuides = true});
+  const SigningSpaceOverlay({
+    super.key,
+    this.showZoneGuides = true,
+    this.showUpperBodyGuide = true,
+    this.handsDetected = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     if (!showZoneGuides) return const SizedBox.shrink();
 
+    final boundaryColor = handsDetected
+        ? const Color(0xFF42D6A4)
+        : const Color(0xFFF4C95D);
+
     return IgnorePointer(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final width = constraints.maxWidth;
-          final height = constraints.maxHeight;
+      child: CustomPaint(
+        painter: _SigningGuidePainter(
+          showUpperBodyGuide: showUpperBodyGuide,
+          boundaryColor: boundaryColor,
+        ),
+      ),
+    );
+  }
+}
 
-          final leftZoneBoundary = width * 0.33;
-          final rightZoneBoundary = width * 0.67;
+class _SigningGuidePainter extends CustomPainter {
+  const _SigningGuidePainter({
+    required this.showUpperBodyGuide,
+    required this.boundaryColor,
+  });
 
-          return Stack(
-            children: [
-              // Left zone divider guide (subtle dashed/faded line)
-              Positioned(
-                left: leftZoneBoundary,
-                top: height * 0.18,
-                bottom: height * 0.22,
-                child: Container(
-                  width: 1,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.white.withValues(alpha: 0.0),
-                        Colors.white.withValues(alpha: 0.25),
-                        Colors.white.withValues(alpha: 0.25),
-                        Colors.white.withValues(alpha: 0.0),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+  final bool showUpperBodyGuide;
+  final Color boundaryColor;
 
-              // Right zone divider guide
-              Positioned(
-                left: rightZoneBoundary,
-                top: height * 0.18,
-                bottom: height * 0.22,
-                child: Container(
-                  width: 1,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.white.withValues(alpha: 0.0),
-                        Colors.white.withValues(alpha: 0.25),
-                        Colors.white.withValues(alpha: 0.25),
-                        Colors.white.withValues(alpha: 0.0),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // Signing Box Reticle (Center Focus Area)
-              Center(
-                child: Container(
-                  width: width * 0.78,
-                  height: height * 0.52,
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      width: 1.5,
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-              ),
-
-              // Subtle Zone Indicators at the top
-              Positioned(
-                top: height * 0.14,
-                left: 0,
-                right: 0,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _buildZonePill('Left', isCenter: false),
-                    _buildZonePill('Signing Area', isCenter: true),
-                    _buildZonePill('Right', isCenter: false),
-                  ],
-                ),
-              ),
-            ],
+  @override
+  void paint(Canvas canvas, Size size) {
+    final frame = showUpperBodyGuide
+        ? Rect.fromLTRB(
+            size.width * 0.17,
+            size.height * 0.24,
+            size.width * 0.83,
+            size.height * 0.76,
+          )
+        : Rect.fromLTRB(
+            size.width * 0.12,
+            size.height * 0.30,
+            size.width * 0.88,
+            size.height * 0.70,
           );
-        },
-      ),
-    );
+    final framePaint = Paint()
+      ..color = boundaryColor.withValues(alpha: 0.72)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round;
+
+    // A light corner frame guides camera placement without drawing over the
+    // signer or implying that the model tracks full-body landmarks.
+    _drawCornerFrame(canvas, frame, framePaint);
   }
 
-  Widget _buildZonePill(String text, {required bool isCenter}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: isCenter
-            ? const Color(0xFFF4C95D).withValues(alpha: 0.2)
-            : Colors.black.withValues(alpha: 0.25),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isCenter
-              ? const Color(0xFFF4C95D).withValues(alpha: 0.6)
-              : Colors.white.withValues(alpha: 0.2),
-          width: 1,
-        ),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: isCenter ? const Color(0xFFF4C95D) : Colors.white70,
-          fontSize: 11,
-          fontWeight: isCenter ? FontWeight.w700 : FontWeight.w500,
-          letterSpacing: 0.2,
-        ),
-      ),
-    );
+  void _drawCornerFrame(Canvas canvas, Rect rect, Paint paint) {
+    const corner = 18.0;
+    for (final side in [1.0, -1.0]) {
+      final x = side == 1.0 ? rect.left : rect.right;
+      final xDirection = side;
+      for (final vertical in [1.0, -1.0]) {
+        final y = vertical == 1.0 ? rect.top : rect.bottom;
+        final yDirection = vertical;
+        canvas.drawLine(
+          Offset(x, y + corner * yDirection),
+          Offset(x, y),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(x, y),
+          Offset(x + corner * xDirection, y),
+          paint,
+        );
+      }
+    }
   }
+
+  @override
+  bool shouldRepaint(covariant _SigningGuidePainter oldDelegate) =>
+      showUpperBodyGuide != oldDelegate.showUpperBodyGuide ||
+      boundaryColor != oldDelegate.boundaryColor;
 }

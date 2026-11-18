@@ -76,12 +76,12 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     });
     _recognitionProvider?.setMode(_currentMode);
     final modeLabel = _currentMode == RecognitionMode.phrases
-        ? 'Phrases (Kamusta/Hello, Salamat, etc.)'
+        ? 'Phrases • sign one item, hold briefly, then lower your hands'
         : _currentMode == RecognitionMode.alphabet
-        ? 'Alphabet (A to Z, Ñ and Ng)'
+        ? 'A–Z, Ng, Ñ • sign letters one at a time; the assembler builds words'
         : _currentMode == RecognitionMode.medical
-        ? 'Medical & Health (Lagnat, Doktor, Sipon, etc.)'
-        : 'Auto (Phrases & Alphabet)';
+        ? 'Medical • sign one health item, hold briefly, then lower your hands'
+        : 'Auto • moving phrases and steady letters; choose Medical for health signs';
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -639,7 +639,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
 
   void _handlePredictionAssembly(SignResult prediction) {
     if (_isPaused) return;
-    final label = prediction.label.trim();
+    final label = _filipinoPredictionText(prediction.label);
     // "Ng" is one FSL alphabet class and should be committed as one
     // orthographic token, just like the single-character letters.
     final normalizedLetter = label.toUpperCase();
@@ -741,7 +741,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
               : _composedSentence)
         : (_activeWordBuffer.isNotEmpty
               ? _activeWordBuffer
-              : (_currentPrediction?.label ?? ''));
+              : _filipinoPredictionText(_currentPrediction?.label ?? ''));
 
     if (text.trim().isEmpty) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -802,7 +802,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
               : _composedSentence)
         : (_activeWordBuffer.isNotEmpty
               ? _activeWordBuffer
-              : (_currentPrediction?.label ?? ''));
+              : _filipinoPredictionText(_currentPrediction?.label ?? ''));
 
     if (textToSpeak.trim().isNotEmpty) {
       HapticFeedback.mediumImpact();
@@ -817,6 +817,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
       }
     }
   }
+
+  String _filipinoPredictionText(String label) =>
+      label.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim();
 
   @override
   void deactivate() {
@@ -1517,7 +1520,10 @@ class _SignToTextScreenState extends State<SignToTextScreen>
               ),
             ),
           ),
-        const SigningSpaceOverlay(),
+        SigningSpaceOverlay(
+          showUpperBodyGuide: _currentMode != RecognitionMode.alphabet,
+          handsDetected: _liveLandmarks.isNotEmpty,
+        ),
         Positioned(
           top: topPadding,
           left: 16,
@@ -1583,7 +1589,10 @@ class _SignToTextScreenState extends State<SignToTextScreen>
             );
           },
         ),
-        const SigningSpaceOverlay(),
+        SigningSpaceOverlay(
+          showUpperBodyGuide: _currentMode != RecognitionMode.alphabet,
+          handsDetected: _liveLandmarks.isNotEmpty,
+        ),
         Positioned(
           top: topPadding,
           left: 16,
@@ -1614,8 +1623,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   }
 
   Widget _buildFingerspellingWordAssembler() {
-    if (_activeWordBuffer.isEmpty &&
-        _composedSentence.isEmpty &&
+    // The result card already shows a single live letter. Show this editor
+    // only when it contains useful assembled text or suggestions.
+    if ((_activeWordBuffer.length < 2 && _composedSentence.isEmpty) &&
         _suggestedWords.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -2074,6 +2084,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
         _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final isPaused = _isPaused;
     final isTracking = _liveLandmarks.isNotEmpty && !isPaused;
+    final framingHint = _currentMode == RecognitionMode.alphabet
+        ? 'Keep your signing hand in the frame.'
+        : 'Keep your head, torso and signing hands visible.';
 
     final String message;
     final IconData icon;
@@ -2124,128 +2137,152 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                   : (isDark ? Colors.white12 : Colors.white60),
             ),
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                icon,
-                color: (_recognitionError != null || isPaused)
-                    ? Colors.white
-                    : iconColor,
-                size: 20,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  message,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
+              Row(
+                children: [
+                  Icon(
+                    icon,
                     color: (_recognitionError != null || isPaused)
                         ? Colors.white
-                        : (isDark ? Colors.white : const Color(0xFF0F172A)),
+                        : iconColor,
+                    size: 20,
                   ),
-                ),
-              ),
-              if (_cameraService.canSwitchCamera) ...[
-                const SizedBox(width: 8),
-                Semantics(
-                  button: true,
-                  label: 'Switch between front and back camera',
-                  child: InkWell(
-                    onTap: () {
-                      HapticFeedback.selectionClick();
-                      _showCameraPicker();
-                    },
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _kAppBlue.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: _kAppBlue.withValues(alpha: 0.3),
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.cameraswitch_rounded,
-                            size: 16,
-                            color: _kAppBlue,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          message,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: (_recognitionError != null || isPaused)
+                                ? Colors.white
+                                : (isDark
+                                      ? Colors.white
+                                      : const Color(0xFF0F172A)),
                           ),
-                          SizedBox(width: 6),
+                        ),
+                        if (_recognitionError == null && !isPaused) ...[
+                          const SizedBox(height: 3),
                           Text(
-                            'Switch',
+                            framingHint,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: _kAppBlue,
+                              fontSize: 11,
+                              color: isDark
+                                  ? Colors.white70
+                                  : const Color(0xFF475569),
                             ),
                           ),
                         ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(width: 6),
-              Semantics(
-                button: true,
-                label: 'Toggle sign recognition mode',
-                child: InkWell(
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    _cycleRecognitionMode();
-                  },
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _kAppBlue.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: _kAppBlue.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _currentMode == RecognitionMode.phrases
-                              ? Icons.chat_bubble_outline_rounded
-                              : _currentMode == RecognitionMode.alphabet
-                              ? Icons.spellcheck_rounded
-                              : _currentMode == RecognitionMode.medical
-                              ? Icons.medical_services_rounded
-                              : Icons.auto_mode_rounded,
-                          size: 15,
-                          color: _kAppBlue,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          _currentMode == RecognitionMode.phrases
-                              ? 'Phrases'
-                              : _currentMode == RecognitionMode.alphabet
-                              ? 'A–Z'
-                              : _currentMode == RecognitionMode.medical
-                              ? 'Medical'
-                              : 'Auto',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: _kAppBlue,
-                          ),
-                        ),
                       ],
                     ),
                   ),
+                ],
+              ),
+              if (_recognitionError == null && !isPaused) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    if (isReady)
+                      Expanded(
+                        child: Text(
+                          kIsWeb ? 'Online recognition' : 'Works offline',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: isDark
+                                ? Colors.white70
+                                : const Color(0xFF475569),
+                          ),
+                        ),
+                      )
+                    else
+                      const Spacer(),
+                    if (_cameraService.canSwitchCamera) ...[
+                      _statusControl(
+                        icon: Icons.cameraswitch_rounded,
+                        label: 'Switch',
+                        semanticLabel: 'Switch between front and back camera',
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          _showCameraPicker();
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    _statusControl(
+                      icon: _currentMode == RecognitionMode.phrases
+                          ? Icons.chat_bubble_outline_rounded
+                          : _currentMode == RecognitionMode.alphabet
+                          ? Icons.spellcheck_rounded
+                          : _currentMode == RecognitionMode.medical
+                          ? Icons.medical_services_rounded
+                          : Icons.auto_mode_rounded,
+                      label: _currentMode == RecognitionMode.phrases
+                          ? 'Phrases'
+                          : _currentMode == RecognitionMode.alphabet
+                          ? 'A–Z'
+                          : _currentMode == RecognitionMode.medical
+                          ? 'Medical'
+                          : 'Auto',
+                      semanticLabel: 'Toggle sign recognition mode',
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        _cycleRecognitionMode();
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _statusControl({
+    required IconData icon,
+    required String label,
+    required String semanticLabel,
+    required VoidCallback onTap,
+  }) {
+    return Semantics(
+      button: true,
+      label: semanticLabel,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: _kAppBlue.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _kAppBlue.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: _kAppBlue),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: _kAppBlue,
                 ),
               ),
             ],

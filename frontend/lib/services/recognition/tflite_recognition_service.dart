@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
@@ -13,6 +13,10 @@ import 'package:tinigsenyas/models/sign_result.dart';
 import 'recognition_service.dart';
 
 class TfliteRecognitionService implements RecognitionService {
+  static const MethodChannel _poseLandmarkerChannel = MethodChannel(
+    'tinigsenyas/pose_landmarker',
+  );
+
   final _predictionsController = StreamController<SignResult>.broadcast();
   final _pauseStatusController = StreamController<bool>.broadcast();
   final _landmarkStreamController =
@@ -23,41 +27,18 @@ class TfliteRecognitionService implements RecognitionService {
   Interpreter? _medicalModelInterpreter;
   HandLandmarkerPlugin? _handLandmarker;
   StreamSubscription<List<Hand>>? _handSubscription;
+  Completer<List<Hand>>? _pendingHandFrame;
+  List<Landmark>? _poseLandmarks;
+  DateTime? _poseLandmarksUpdatedAt;
+  bool _poseLandmarkerReady = false;
+  int _poseFrameCounter = 0;
 
   List<String> _fslLabels = [];
   List<String> _medicalLabels = [];
-  final List<String> _alphabetLabels = [
-    'A',
-    'B',
-    'C',
-    'D',
-    'E',
-    'F',
-    'G',
-    'H',
-    'I',
-    'J',
-    'K',
-    'L',
-    'M',
-    'N',
-    'Ng',
-    'O',
-    'P',
-    'Q',
-    'R',
-    'S',
-    'T',
-    'U',
-    'V',
-    'W',
-    'X',
-    'Y',
-    'Z',
-    'Ñ',
-  ];
+  List<String> _alphabetLabels = [];
   static const int _conversationalClassCount = 103;
   static const int _medicalClassCount = 25;
+  static const int _alphabetClassCount = 28;
 
   RecognitionMode _mode = RecognitionMode.auto;
   @override
@@ -79,6 +60,10 @@ class TfliteRecognitionService implements RecognitionService {
     _medProbHistory.clear();
     _medCandidate = null;
     _medCandidateCount = 0;
+    _medEmittedLabel = null;
+    _sequenceBuffer.clear();
+    _lastGestureMotionAt = null;
+    _motionRouteActive = false;
   }
 
   Offset? _lastWrist;
@@ -103,6 +88,7 @@ class TfliteRecognitionService implements RecognitionService {
   static const double _paperMinimumConfidence = 0.60;
   static const double _paperMinimumMargin = 0.12;
   static const double _paperHighConfidence = 0.75;
+  static const Duration _gestureSettleWindow = Duration(milliseconds: 900);
 
   bool _isInitialized = false;
   bool _isRunning = false;
@@ -113,6 +99,8 @@ class TfliteRecognitionService implements RecognitionService {
   final List<List<List<double>>> _sequenceBuffer = [];
   static const int _targetSequenceLength = 60;
   static const int _totalJoints = 75;
+  (double, double, double) _poseNormalizationCenter = (0.5, 0.5, 0.0);
+  double _poseNormalizationScale = 0.20;
 
   // Debouncing / Stability state
   String? _lastEmittedLabel;
@@ -127,6 +115,7 @@ class TfliteRecognitionService implements RecognitionService {
   int _fslReleaseFrameCount = 0;
   String? _medCandidate;
   int _medCandidateCount = 0;
+  String? _medEmittedLabel;
 
   // Trajectory tracking for dynamic fingerspelled letter 'J'
   final List<(double, double, bool)> _jTrajectory = [];
@@ -136,20 +125,37 @@ class TfliteRecognitionService implements RecognitionService {
   bool _manualPaused = false;
   int _restZoneFrameCount = 0;
   static const int _restZoneThreshold = 15; // ~500ms of sustained hands at rest
+  DateTime? _lastGestureMotionAt;
 
   bool _passesPaperConfidenceGate(double top1, double top2) =>
       top1 >= _paperHighConfidence ||
       (top1 >= _paperMinimumConfidence && top1 - top2 >= _paperMinimumMargin);
 
+  bool get _hasRecentGestureActivity =>
+      _lastGestureMotionAt != null &&
+      DateTime.now().difference(_lastGestureMotionAt!) <= _gestureSettleWindow;
+
   @override
-  bool get isModelReady =>
-      _isInitialized &&
-      _alphabetInterpreter != null &&
-      _fslModelInterpreter != null &&
-      _medicalModelInterpreter != null &&
-      _fslLabels.length == _conversationalClassCount &&
-      _alphabetLabels.length == 28 &&
-      _medicalLabels.length == _medicalClassCount;
+  bool get isModelReady {
+    if (!_isInitialized || _handLandmarker == null) return false;
+    final alphabetReady =
+        _alphabetInterpreter != null &&
+        _alphabetLabels.length == _alphabetClassCount;
+    final phraseReady =
+        _poseLandmarkerReady &&
+        _fslModelInterpreter != null &&
+        _fslLabels.length == _conversationalClassCount;
+    final medicalReady =
+        _poseLandmarkerReady &&
+        _medicalModelInterpreter != null &&
+        _medicalLabels.length == _medicalClassCount;
+    return switch (_mode) {
+      RecognitionMode.alphabet => alphabetReady,
+      RecognitionMode.phrases => phraseReady,
+      RecognitionMode.medical => medicalReady,
+      RecognitionMode.auto => alphabetReady && phraseReady && medicalReady,
+    };
+  }
 
   bool _matchesShape(List<int> actual, List<int> expected) =>
       actual.length == expected.length &&
@@ -277,6 +283,17 @@ class TfliteRecognitionService implements RecognitionService {
 
       if (!kIsWeb && Platform.isAndroid) {
         try {
+          _poseLandmarkerReady =
+              await _poseLandmarkerChannel.invokeMethod<bool>('initialize') ??
+              false;
+        } catch (e) {
+          _poseLandmarkerReady = false;
+          debugPrint(
+            '[TfliteRecognitionService] Pose Landmarker unavailable: $e',
+          );
+        }
+
+        try {
           _handLandmarker = HandLandmarkerPlugin.create(
             numHands: 2,
             minHandDetectionConfidence: 0.5,
@@ -334,6 +351,16 @@ class TfliteRecognitionService implements RecognitionService {
         modelName: 'medical',
       );
 
+      final localAlphabetLabelsFile = modelsDir != null
+          ? File(p.join(modelsDir.path, 'alphabet_labels.txt'))
+          : null;
+      _alphabetLabels = await _loadLabels(
+        localFile: localAlphabetLabelsFile,
+        assetPath: 'assets/model/alphabet_labels.txt',
+        expectedCount: _alphabetClassCount,
+        modelName: 'alphabet',
+      );
+
       _alphabetInterpreter?.close();
       _alphabetInterpreter = null;
       final localAlphaFile = modelsDir != null
@@ -344,7 +371,7 @@ class TfliteRecognitionService implements RecognitionService {
         localFile: localAlphaFile,
         assetPath: 'assets/model/fsl_alphabet.tflite',
         inputShape: const [1, 63],
-        outputShape: [1, _alphabetLabels.length],
+        outputShape: const [1, _alphabetClassCount],
         options: InterpreterOptions()..threads = 2,
       );
 
@@ -396,11 +423,20 @@ class TfliteRecognitionService implements RecognitionService {
     _handSubscription?.cancel();
     if (_handLandmarker != null) {
       _handSubscription = _handLandmarker!.landmarkStream.listen(
-        _handleDetectedHands,
+        (hands) {
+          final pending = _pendingHandFrame;
+          if (pending != null && !pending.isCompleted) {
+            pending.complete(hands);
+          }
+        },
         onError: (err) {
           debugPrint(
             '[TfliteRecognitionService] Landmarker stream error: $err',
           );
+          final pending = _pendingHandFrame;
+          if (pending != null && !pending.isCompleted) {
+            pending.complete(const []);
+          }
         },
       );
     }
@@ -411,6 +447,10 @@ class TfliteRecognitionService implements RecognitionService {
     _isRunning = false;
     _handSubscription?.cancel();
     _handSubscription = null;
+    _pendingHandFrame = null;
+    _poseLandmarks = null;
+    _poseLandmarksUpdatedAt = null;
+    _poseFrameCounter = 0;
     _resetTrackingState();
   }
 
@@ -426,18 +466,100 @@ class TfliteRecognitionService implements RecognitionService {
     if (!_isRunning || !_isInitialized) return;
     if (_isProcessingFrame) return;
 
-    if (sensorOrientation != null) _sensorOrientation = sensorOrientation;
-    if (isFrontCamera != null) _isFrontCamera = isFrontCamera;
+    final nextSensorOrientation = sensorOrientation ?? _sensorOrientation;
+    final nextIsFrontCamera = isFrontCamera ?? _isFrontCamera;
+    if (nextSensorOrientation != _sensorOrientation ||
+        nextIsFrontCamera != _isFrontCamera) {
+      _sensorOrientation = nextSensorOrientation;
+      _isFrontCamera = nextIsFrontCamera;
+      _poseLandmarks = null;
+      _poseLandmarksUpdatedAt = null;
+      _poseFrameCounter = 0;
+      _clearTemporalTrackingData();
+      _lastTrackedHandCount = 0;
+      _missingHandFrames = 0;
+      _restZoneFrameCount = 0;
+    }
 
-    if (_handLandmarker != null) {
-      _isProcessingFrame = true;
-      try {
-        _handLandmarker!.processFrame(image, _sensorOrientation);
-      } catch (e) {
-        debugPrint('[TfliteRecognitionService] processFrame error: $e');
-      } finally {
-        _isProcessingFrame = false;
+    final handLandmarker = _handLandmarker;
+    if (handLandmarker == null) return;
+
+    _isProcessingFrame = true;
+    try {
+      _poseFrameCounter++;
+      if (_poseLandmarkerReady && _poseFrameCounter % 4 == 1) {
+        final detectedPose = await _detectPoseLandmarks(image);
+        _poseLandmarks = detectedPose;
+        _poseLandmarksUpdatedAt = detectedPose == null ? null : DateTime.now();
+      } else if (_poseLandmarksUpdatedAt != null &&
+          DateTime.now().difference(_poseLandmarksUpdatedAt!) >
+              const Duration(milliseconds: 600)) {
+        _poseLandmarks = null;
+        _poseLandmarksUpdatedAt = null;
       }
+
+      final pending = Completer<List<Hand>>();
+      _pendingHandFrame = pending;
+      handLandmarker.processFrame(image, _sensorOrientation);
+      final hands = await pending.future.timeout(
+        const Duration(milliseconds: 700),
+        onTimeout: () {
+          debugPrint(
+            '[TfliteRecognitionService] Hand Landmarker frame timed out.',
+          );
+          return const <Hand>[];
+        },
+      );
+      if (identical(_pendingHandFrame, pending)) _pendingHandFrame = null;
+      _handleDetectedHands(hands, poseLandmarks: _poseLandmarks);
+    } catch (e) {
+      debugPrint('[TfliteRecognitionService] processFrame error: $e');
+    } finally {
+      _pendingHandFrame = null;
+      _isProcessingFrame = false;
+    }
+  }
+
+  Future<List<Landmark>?> _detectPoseLandmarks(CameraImage image) async {
+    if (image.planes.length < 3) return null;
+    final yPlane = image.planes[0];
+    final uPlane = image.planes[1];
+    final vPlane = image.planes[2];
+    try {
+      final raw = await _poseLandmarkerChannel
+          .invokeMethod<List<dynamic>>('detect', {
+            'yPlane': yPlane.bytes,
+            'uPlane': uPlane.bytes,
+            'vPlane': vPlane.bytes,
+            'width': image.width,
+            'height': image.height,
+            'yRowStride': yPlane.bytesPerRow,
+            'uvRowStride': uPlane.bytesPerRow,
+            'uvPixelStride': uPlane.bytesPerPixel ?? 1,
+            'rotation': _sensorOrientation,
+            'timestampMs': DateTime.now().millisecondsSinceEpoch,
+          });
+      if (raw == null || raw.length != 33) return null;
+      final pose = <Landmark>[];
+      for (final point in raw) {
+        if (point is! Map) return null;
+        final x = (point['x'] as num?)?.toDouble();
+        final y = (point['y'] as num?)?.toDouble();
+        final z = (point['z'] as num?)?.toDouble();
+        if (x == null ||
+            y == null ||
+            z == null ||
+            !x.isFinite ||
+            !y.isFinite ||
+            !z.isFinite) {
+          return null;
+        }
+        pose.add(Landmark(x, y, z));
+      }
+      return pose;
+    } catch (e) {
+      debugPrint('[TfliteRecognitionService] Pose inference failed: $e');
+      return null;
     }
   }
 
@@ -541,6 +663,8 @@ class TfliteRecognitionService implements RecognitionService {
 
   void _clearTemporalTrackingData() {
     _sequenceBuffer.clear();
+    _poseNormalizationCenter = (0.5, 0.5, 0.0);
+    _poseNormalizationScale = 0.20;
     _alphaProbHistory.clear();
     _fslProbHistory.clear();
     _medProbHistory.clear();
@@ -560,6 +684,8 @@ class TfliteRecognitionService implements RecognitionService {
     _fslReleaseFrameCount = 0;
     _medCandidate = null;
     _medCandidateCount = 0;
+    _medEmittedLabel = null;
+    _lastGestureMotionAt = null;
     _jTrajectory.clear();
   }
 
@@ -570,7 +696,10 @@ class TfliteRecognitionService implements RecognitionService {
     _restZoneFrameCount = 0;
   }
 
-  void _handleDetectedHands(List<Hand> hands) {
+  void _handleDetectedHands(
+    List<Hand> hands, {
+    required List<Landmark>? poseLandmarks,
+  }) {
     if (!_isRunning) return;
 
     final now = DateTime.now();
@@ -635,6 +764,7 @@ class TfliteRecognitionService implements RecognitionService {
       _fslReleaseFrameCount = 0;
       _medCandidate = null;
       _medCandidateCount = 0;
+      _medEmittedLabel = null;
     }
     _lastTrackedHandCount = transformedHands.length;
 
@@ -708,6 +838,8 @@ class TfliteRecognitionService implements RecognitionService {
         _fslReleaseFrameCount = 0;
         _medCandidate = null;
         _medCandidateCount = 0;
+        _medEmittedLabel = null;
+        _lastGestureMotionAt = null;
       }
       return; // Skip inference while hands are resting
     } else {
@@ -742,7 +874,12 @@ class TfliteRecognitionService implements RecognitionService {
         _sequenceBuffer.clear();
         _fslProbHistory.clear();
         _medProbHistory.clear();
+        _lastGestureMotionAt = now;
       }
+    } else {
+      // A newly raised hand starts a fresh gesture window even when the sign
+      // itself is primarily a held posture.
+      _lastGestureMotionAt = now;
     }
     _lastWrist = Offset(wrist.$1, wrist.$2);
     _lastWristTimestamp = now;
@@ -750,10 +887,12 @@ class TfliteRecognitionService implements RecognitionService {
     if (_motionHistory.length > 8) _motionHistory.removeAt(0);
     final avgMotion =
         _motionHistory.reduce((a, b) => a + b) / _motionHistory.length;
+    if (avgMotion >= 0.005 || _sequenceBuffer.length < 24) {
+      _lastGestureMotionAt = now;
+    }
     if (avgMotion <= 0.009) {
       _fslReleaseFrameCount++;
       if (_fslReleaseFrameCount >= 6) {
-        _fslEmittedLabel = null;
         _fslCandidate = null;
         _fslCandidateCount = 0;
         _fslProbHistory.clear();
@@ -763,12 +902,21 @@ class TfliteRecognitionService implements RecognitionService {
     }
     if (avgMotion >= 0.015) {
       _motionRouteActive = true;
-    } else if (avgMotion <= 0.009) {
-      _motionRouteActive = false;
     }
 
-    // 5. Accumulate continuous ST-GCN sequence frame buffer
-    _accumulateSequenceFrame(smoothedHands);
+    // 5. Accumulate a model-compatible body and hand sequence. The ST-GCN
+    // was trained with all 33 MediaPipe pose landmarks plus both hand slots.
+    if (poseLandmarks != null && poseLandmarks.length == 33) {
+      _accumulateSequenceFrame(smoothedHands, poseLandmarks);
+    } else {
+      _sequenceBuffer.clear();
+      _fslProbHistory.clear();
+      _medProbHistory.clear();
+      _fslCandidate = null;
+      _fslCandidateCount = 0;
+      _medCandidate = null;
+      _medCandidateCount = 0;
+    }
 
     // 6. Dynamic Letter 'J' Kinematic Detector:
     // In FSL, 'J' is traced dynamically in the air using an 'I' handshape (downward stroke + upward hook).
@@ -812,9 +960,9 @@ class TfliteRecognitionService implements RecognitionService {
     if (_mode == RecognitionMode.alphabet) {
       _evaluateAlphabet(smoothedPrimary);
     } else if (_mode == RecognitionMode.phrases) {
-      _evaluateConversationalSign(avgMotion);
+      _evaluateConversationalSign();
     } else if (_mode == RecognitionMode.medical) {
-      _evaluateMedicalSign(avgMotion);
+      _evaluateMedicalSign();
     } else {
       // Auto Mode:
       // FSL Alphabet fingerspelling is strictly 1-handed.
@@ -824,14 +972,14 @@ class TfliteRecognitionService implements RecognitionService {
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
         _alphaReleaseFrameCount = 0;
-        _evaluateConversationalSign(avgMotion);
+        _evaluateConversationalSign();
       } else if (_motionRouteActive) {
         // Dynamic single-hand movement: route to ST-GCN conversational phrases
         _alphaProbHistory.clear();
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
         _alphaReleaseFrameCount = 0;
-        _evaluateConversationalSign(avgMotion);
+        _evaluateConversationalSign();
       } else {
         // Hand held steady: evaluate Alphabet Fingerspelling (A-Z)
         _fslProbHistory.clear();
@@ -1052,37 +1200,59 @@ class TfliteRecognitionService implements RecognitionService {
     }
   }
 
-  /// Transforms screen landmarks to unmirrored world coordinates and builds canonical ST-GCN joint frame
-  void _accumulateSequenceFrame(List<List<(double, double, double)>> hands) {
-    if (hands.isEmpty) return;
+  /// Builds the exact 75-joint input layout used by ST-GCN training:
+  /// 33 pose landmarks, 21 left-hand landmarks, and 21 right-hand landmarks.
+  void _accumulateSequenceFrame(
+    List<List<(double, double, double)>> hands,
+    List<Landmark> poseLandmarks,
+  ) {
+    if (hands.isEmpty || poseLandmarks.length != 33) return;
+
+    (double, double, double) toWorld((double, double, double) point) =>
+        (_isFrontCamera ? 1.0 - point.$1 : point.$1, point.$2, point.$3);
+
+    final pose = poseLandmarks.map(_transformLandmark).map(toWorld).toList();
+    final leftShoulder = pose[11];
+    final rightShoulder = pose[12];
+    final midShoulder = (
+      (leftShoulder.$1 + rightShoulder.$1) / 2.0,
+      (leftShoulder.$2 + rightShoulder.$2) / 2.0,
+      (leftShoulder.$3 + rightShoulder.$3) / 2.0,
+    );
+    final shoulderDx = leftShoulder.$1 - rightShoulder.$1;
+    final shoulderDy = leftShoulder.$2 - rightShoulder.$2;
+    final shoulderDz = leftShoulder.$3 - rightShoulder.$3;
+    final measuredShoulderWidth = math.sqrt(
+      shoulderDx * shoulderDx +
+          shoulderDy * shoulderDy +
+          shoulderDz * shoulderDz,
+    );
+    if (measuredShoulderWidth > 0.05) {
+      _poseNormalizationCenter = midShoulder;
+      _poseNormalizationScale = measuredShoulderWidth;
+    }
+
+    List<double> normalize((double, double, double) point) => [
+      (point.$1 - _poseNormalizationCenter.$1) / _poseNormalizationScale,
+      (point.$2 - _poseNormalizationCenter.$2) / _poseNormalizationScale,
+      (point.$3 - _poseNormalizationCenter.$3) / _poseNormalizationScale,
+    ];
 
     final currentJoints = List.generate(_totalJoints, (_) => [0.0, 0.0, 0.0]);
-
-    // Unmirror X for front camera to match the world space of the training dataset
-    (double, double, double) toWorld((double, double, double) pt) {
-      final wx = _isFrontCamera ? (1.0 - pt.$1) : pt.$1;
-      return (wx, pt.$2, pt.$3);
+    for (int i = 0; i < pose.length; i++) {
+      currentJoints[i] = normalize(pose[i]);
     }
 
-    // Normalizes point relative to mid-shoulder (0.50, 0.65) and shoulder width (0.22)
-    List<double> normJoint((double, double, double) pt) {
-      return [(pt.$1 - 0.50) / 0.22, (pt.$2 - 0.65) / 0.22, pt.$3 / 0.22];
-    }
-
-    final worldHands = hands.map((h) => h.map(toWorld).toList()).toList();
-
+    final worldHands = hands.map((hand) => hand.map(toWorld).toList()).toList();
     List<(double, double, double)> rightHand;
     List<(double, double, double)>? leftHand;
-
     if (worldHands.length >= 2) {
       final hand0 = worldHands[0];
       final hand1 = worldHands[1];
       final meanX0 =
-          hand0.map((p) => p.$1).reduce((a, b) => a + b) / hand0.length;
+          hand0.map((point) => point.$1).reduce((a, b) => a + b) / hand0.length;
       final meanX1 =
-          hand1.map((p) => p.$1).reduce((a, b) => a + b) / hand1.length;
-
-      // In unmirrored world space, signer's right is on image left (lower x), left is on image right (higher x)
+          hand1.map((point) => point.$1).reduce((a, b) => a + b) / hand1.length;
       if (meanX0 < meanX1) {
         rightHand = hand0;
         leftHand = hand1;
@@ -1091,49 +1261,18 @@ class TfliteRecognitionService implements RecognitionService {
         leftHand = hand0;
       }
     } else {
-      rightHand = worldHands[0];
+      rightHand = worldHands.first;
       leftHand = null;
     }
 
-    // Assign Right Hand joints to slot 54..74
     for (int i = 0; i < 21 && i < rightHand.length; i++) {
-      currentJoints[54 + i] = normJoint(rightHand[i]);
+      currentJoints[54 + i] = normalize(rightHand[i]);
     }
-
-    // Assign Left Hand joints to slot 33..53 if present
     if (leftHand != null) {
       for (int i = 0; i < 21 && i < leftHand.length; i++) {
-        currentJoints[33 + i] = normJoint(leftHand[i]);
+        currentJoints[33 + i] = normalize(leftHand[i]);
       }
     }
-
-    // Synthetic canonical pose landmarks in slots 0..32 matching ST-GCN graph topology:
-    currentJoints[0] = [0.0, -0.95, -0.1]; // Head / Nose
-    currentJoints[11] = [0.50, 0.0, 0.0]; // Left Shoulder
-    currentJoints[12] = [-0.50, 0.0, 0.0]; // Right Shoulder
-    currentJoints[23] = [0.40, 1.8, 0.0]; // Left Hip
-    currentJoints[24] = [-0.40, 1.8, 0.0]; // Right Hip
-
-    // Connect Right arm chain (Right shoulder 12 -> Right elbow 14 -> Right wrist 16 -> Right hand 54)
-    currentJoints[16] = List<double>.from(currentJoints[54]);
-    currentJoints[14] = [
-      (currentJoints[12][0] + currentJoints[16][0]) / 2.0,
-      (currentJoints[12][1] + currentJoints[16][1]) / 2.0,
-      (currentJoints[12][2] + currentJoints[16][2]) / 2.0,
-    ];
-
-    // Connect Left arm chain (Left shoulder 11 -> Left elbow 13 -> Left wrist 15 -> Left hand 33)
-    if (leftHand != null) {
-      currentJoints[15] = List<double>.from(currentJoints[33]);
-    } else {
-      // Resting position when left hand is idle during single-handed sign
-      currentJoints[15] = [0.55, 0.90, 0.0];
-    }
-    currentJoints[13] = [
-      (currentJoints[11][0] + currentJoints[15][0]) / 2.0,
-      (currentJoints[11][1] + currentJoints[15][1]) / 2.0,
-      (currentJoints[11][2] + currentJoints[15][2]) / 2.0,
-    ];
 
     _sequenceBuffer.add(currentJoints);
     if (_sequenceBuffer.length > _targetSequenceLength) {
@@ -1142,11 +1281,12 @@ class TfliteRecognitionService implements RecognitionService {
   }
 
   /// Runs 103-class ST-GCN conversational model on continuous sequence buffer
-  void _evaluateConversationalSign(double avgMotion) {
+  void _evaluateConversationalSign() {
     if (_fslModelInterpreter == null || _fslLabels.isEmpty || _isPaused) return;
 
-    // Require at least 24 frames of continuous gesture buffer (~0.8s) and active kinetic movement
-    if (_sequenceBuffer.length >= 24 && avgMotion >= 0.005) {
+    // Keep evaluating through the deliberate end hold so the classifier sees
+    // the completed sign and can settle before the signer lowers their hands.
+    if (_sequenceBuffer.length >= 24 && _hasRecentGestureActivity) {
       try {
         final seqInput = _resampleSequence(
           _sequenceBuffer,
@@ -1268,14 +1408,14 @@ class TfliteRecognitionService implements RecognitionService {
   }
 
   /// Evaluates 60-frame ST-GCN sequence using dedicated 25-class Medical FSL model
-  void _evaluateMedicalSign(double avgMotion) {
+  void _evaluateMedicalSign() {
     if (_medicalModelInterpreter == null ||
         _medicalLabels.isEmpty ||
         _isPaused) {
       return;
     }
 
-    if (_sequenceBuffer.length >= 24 && avgMotion >= 0.005) {
+    if (_sequenceBuffer.length >= 24 && _hasRecentGestureActivity) {
       try {
         final seqInput = _resampleSequence(
           _sequenceBuffer,
@@ -1338,7 +1478,7 @@ class TfliteRecognitionService implements RecognitionService {
             _medCandidateCount = 1;
           }
 
-          if (_medCandidateCount >= 4) {
+          if (_medCandidateCount >= 4 && displayWord != _medEmittedLabel) {
             final now = DateTime.now();
             final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
             final isSameWord = (displayWord == _lastEmittedLabel);
@@ -1346,6 +1486,7 @@ class TfliteRecognitionService implements RecognitionService {
 
             if (elapsed > requiredDelay) {
               _lastEmittedLabel = displayWord;
+              _medEmittedLabel = displayWord;
               _lastEmittedTime = now;
               _predictionsController.add(
                 SignResult(
@@ -1451,6 +1592,13 @@ class TfliteRecognitionService implements RecognitionService {
     _isRunning = false;
     _isInitialized = false;
     _handSubscription?.cancel();
+    _pendingHandFrame = null;
+    if (_poseLandmarkerReady) {
+      unawaited(
+        _poseLandmarkerChannel.invokeMethod<void>('close').catchError((_) {}),
+      );
+      _poseLandmarkerReady = false;
+    }
     _predictionsController.close();
     _pauseStatusController.close();
     _landmarkStreamController.close();

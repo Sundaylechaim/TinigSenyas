@@ -1,9 +1,9 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
   "sha256": "b35f40d6dc2ca8f7b73b0412834d462b71dbcbfefe29a9ab4b1ab8a810baa3a4",
   "min_app_version": "1.0.0",
-  "notes": "Added dedicated 25-class Medical FSL ST-GCN model alongside alphabet and conversational signs.",
+  "notes": "Synchronizes all three model label maps, including the 28-class FSL alphabet output order.",
   "models": [
     {
       "name": "fsl_alphabet.tflite",
@@ -19,6 +19,21 @@
       "name": "fsl_medical.tflite",
       "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_medical.tflite",
       "sha256": "b0825c8fb7cc35fae8171ea5532fc75b247bb9cc1b62afd1fa4fbfb25cd4ab20"
+    },
+    {
+      "name": "labels.txt",
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/labels.txt",
+      "sha256": "866cbc2ca625cddde62744689e8780694ca3af8d165a5cc3e9092da1f4a84bcb"
+    },
+    {
+      "name": "medical_labels.txt",
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/medical_labels.txt",
+      "sha256": "9b769b64f890dd31a4350d98bfa89f0c8f66d85239a9f1ef70b627fd7a40e1b7"
+    },
+    {
+      "name": "alphabet_labels.txt",
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/alphabet_labels.txt",
+      "sha256": "6e0c47a0065919a1ca327414c577e9ed6888ab292ddabed5402a04445136544f"
     }
   ]
 }

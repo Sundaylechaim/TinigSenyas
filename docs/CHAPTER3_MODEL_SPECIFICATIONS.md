@@ -4,7 +4,7 @@
 **Institution:** Eulogio "Amang" Rodriguez Institute of Science and Technology (EARIST)  
 **Community Partner:** KAINAKAP Inclusive and Opportunity Inc.  
 **Model Checkpoint:** `best_fsl_model.keras` (103 outputs) → quantized as the shipped `fsl_model.tflite`
-**Vocabulary Capacity:** 103 transactional FSL classes in the deployed model, plus a separate 26-class fingerspelling head (`fsl_alphabet.tflite`). The older `fsl_model.keras` checkpoint has a 127-class output layer and is retained for history only - it is not the model running in the app.
+**Vocabulary Capacity:** 103 conversational FSL classes in `fsl_model.tflite`, 25 medical outputs in `fsl_medical.tflite` (17 named signs plus 8 reserved outputs suppressed by the app), and 28 alphabet outputs in `fsl_alphabet.tflite` (A–Z, `Ng`, and `Ñ`). The older `fsl_model.keras` checkpoint has a 127-class output layer and is retained for history only; it is not the model running in the app.
 
 ---
 
@@ -30,6 +30,7 @@ TinigSenyas implements an end-to-end computer vision and deep learning pipeline 
 +-----------------------------------------------------------------------------------+
 |                   3. Posture Normalization & Hand Mirroring                       |
 |      - Shoulder Normalization: Translated to mid-shoulder, scaled by width        |
+|      - Android Pose Landmarker Lite supplies the real 33-point body skeleton     |
 |      - Canonical Hand Mirroring: Left-hand signs horizontally mirrored at wrist   |
 |      - Dual-Hypothesis Evaluation: Evaluates single & two-handed topologies       |
 +-----------------------------------------------------------------------------------+
@@ -122,7 +123,7 @@ Where $\tilde{\mathbf{A}} = \mathbf{D}^{-\frac{1}{2}} (\mathbf{A} + \mathbf{I}) 
 
 Because publicly available FSL video repositories are limited in scale, the dataset methodology uses a **Dual-Modal Acquisition Protocol**:
 
-1. **Static Gesture Acquisition (Alphabet A–Z, Numbers 0–9):**
+1. **Static Gesture Acquisition (Alphabet A–Z, `Ng`, and `Ñ`):**
    * High-resolution photographic records taken under diverse lighting conditions and camera angles.
    * MediaPipe landmarks extracted and expanded into 60-frame static sequences with subtle Gaussian temporal perturbation ($\sigma = 0.003$) to simulate realistic hand micro-tremors without losing gesture geometry.
 2. **Dynamic Gesture Acquisition (Phrases, Greetings, Medical Terms):**
@@ -151,4 +152,10 @@ The trained Keras model (`best_fsl_model.keras`) is converted into an edge-optim
 * **Inference Latency:** $< 25\text{ ms}$ on mobile CPU / desktop CPU
 * **Memory Footprint:** $\approx 18\text{ MB}$ total runtime overhead
 * **Integrity Validation:** Monitored via SHA-256 hash and version-controlled OTA manifests (`version.txt`, `manifest.json`).
+
+## 7. Runtime Scope & User Interaction
+
+The camera models classify one isolated sign at a time; they do not translate unrestricted, continuous FSL sentences. The Android app supplies the ST-GCN models with 33 live pose landmarks and 42 hand landmarks before normalizing the sequence to `(1, 60, 75, 3)`. The alphabet model uses its separate 21-point hand input. Model output indices are paired with the shipped label files in the same OTA update, keeping each output aligned with its Filipino label.
+
+For short interactions, select **Phrases** or **Medical**, sign one clear item, hold the final position briefly, then lower the hands to reset for the next item. **A–Z** mode appends letters, including `Ng` and `Ñ`, to the word assembler for names or terms outside the phrase vocabularies. Speech-to-text, editable text, and preset assistance remain available when camera signing is not practical.
 
