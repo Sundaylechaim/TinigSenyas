@@ -86,7 +86,7 @@ class ModelUpdateInfo {
 }
 
 class ModelUpdater {
-  static const currentAppVersion = '1.2.10';
+  static const currentAppVersion = '1.2.11';
   static const defaultRemoteManifestUrl =
       'https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/manifest.json';
   static const _manifestAsset = 'assets/model/manifest.json';
