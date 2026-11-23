@@ -31,7 +31,7 @@ Developed for the Capstone Project at Eulogio "Amang" Rodriguez Institute of Sci
 ## Tech Stack & Dependencies
 
 ### Machine Learning & Vision Architecture
-- **Training Framework**: TensorFlow 2 / Keras — `best_fsl_model.keras` and `fsl_model.keras` are training checkpoints kept for reproducibility; **no runtime code loads them**.
+- **Training Framework**: TensorFlow 2 / Keras — `backend/models/best_fsl_model.keras` is kept as a training checkpoint; the app runtime loads only its bundled TFLite models.
 - **Neural Architecture**: Spatial-Temporal Graph Convolutional Network (ST-GCN)
 - **Edge Inference**: LiteRT on `fsl_model.tflite` → `(1, 60, 75, 3)` in, `(1, 103)` out; `fsl_medical.tflite` → `(1, 60, 75, 3)` in, `(1, 35)` out; and `fsl_alphabet.tflite` → `(1, 63)` in, `(1, 28)` out. TensorFlow itself is not a runtime dependency.
 - **Landmark Extractors**: Google MediaPipe Tasks (Pose Landmarker Lite + Hand Landmarker, 75 skeletal joints)
@@ -106,8 +106,8 @@ flutter run -d <device-id>
 ```
 The web target does **not** build: `tflite_flutter` and `sherpa_onnx` require `dart:ffi`,
 which is unavailable on the web, so `flutter build web` and `flutter run -d chrome` fail at
-compile time. `frontend/run_web.ps1` therefore only works if it is pointed at a mobile
-device; there is currently no browser deployment for TinigSenyas.
+compile time. Run TinigSenyas on a supported Android device or emulator; there is no
+browser deployment.
 
 ---
 
@@ -128,5 +128,4 @@ Recorded here so they are not mistaken for working features during evaluation:
 - **No web deployment.** `flutter build web` fails: `tflite_flutter` and `sherpa_onnx` depend on `dart:ffi`. Making the browser target viable requires isolating those services behind conditional imports.
 - **The backend is a laptop service, not a cloud service.** `/video_feed` and `/predict_frame` capture `cv2.VideoCapture(0)` on whichever machine runs the API, and recognition state is held in process globals, so there is no camera and no horizontal scale on container hosts.
 - **Training code is a submodule.** Fresh clones need `git submodule update --init --recursive` to fetch `tinigsenyas_training/`; the application itself does not require the training files at runtime.
-- **`fsl_recognition.py` and `validate_hand_tracking.py` are orphaned.** Nothing imports them; `sign_classifier.py` is the live inference path.
 - **iOS releases are unsigned.** CI packages `Runner.app` into an `.ipa` with `--no-codesign`, which only becomes installable after Sideloadly re-signs it with a personal Apple ID (7-day certificate).

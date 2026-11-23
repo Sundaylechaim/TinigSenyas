@@ -313,7 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: Icons.layers_outlined,
                   title: 'Active Models & Datasets',
                   subtitle:
-                      'Conversational (103 signs) • A–Z Alphabet • Medical & Symptoms (25 signs)',
+                      'Conversational (103 signs) • A–Z Alphabet • Medical & Symptoms (35 signs)',
                   trailing: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,

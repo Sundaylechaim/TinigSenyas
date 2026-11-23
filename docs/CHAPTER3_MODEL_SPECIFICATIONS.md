@@ -4,7 +4,7 @@
 **Institution:** Eulogio "Amang" Rodriguez Institute of Science and Technology (EARIST)  
 **Community Partner:** KAINAKAP Inclusive and Opportunity Inc.  
 **Model Checkpoint:** `best_fsl_model.keras` (103 outputs) → quantized as the shipped `fsl_model.tflite`
-**Vocabulary Capacity:** 103 conversational FSL classes in `fsl_model.tflite`, 25 medical outputs in `fsl_medical.tflite` (17 named signs plus 8 reserved outputs suppressed by the app), and 28 alphabet outputs in `fsl_alphabet.tflite` (A–Z, `Ng`, and `Ñ`). The older `fsl_model.keras` checkpoint has a 127-class output layer and is retained for history only; it is not the model running in the app.
+**Vocabulary Capacity:** 103 conversational FSL classes in `fsl_model.tflite`, 35 medical outputs in `fsl_medical.tflite` matched by 35 entries in `medical_labels.txt`, and 28 alphabet outputs in `fsl_alphabet.tflite` (A–Z, `Ng`, and `Ñ`). The app runs the bundled TFLite models; the Keras checkpoint is retained for training and conversion only.
 
 ---
 

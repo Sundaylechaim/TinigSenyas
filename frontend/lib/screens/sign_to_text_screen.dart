@@ -1534,7 +1534,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                         ),
                         const SizedBox(height: 10),
                         Text(
-                          'The Python server (server.py) is not running on port 5000. You can switch to your direct browser webcam right now, or launch run_web.ps1.',
+                          'The backend is not reachable on port 5000. Try on-device camera mode or check the backend address.',
                           style: TextStyle(
                             fontSize: 13,
                             color: isDark

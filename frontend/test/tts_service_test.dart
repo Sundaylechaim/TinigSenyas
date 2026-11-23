@@ -157,7 +157,7 @@ void main() {
     );
 
     test(
-      'shows the one-command launcher when the local speech service is down',
+      'explains how to restore the local speech service connection',
       () async {
         SharedPreferences.setMockInitialValues({});
         FlutterSecureStoragePlatform.instance =
@@ -178,7 +178,7 @@ void main() {
               isA<StateError>().having(
                 (error) => error.message,
                 'message',
-                contains(r'.\frontend\run_web.ps1'),
+                contains('backend is running'),
               ),
             ),
           );

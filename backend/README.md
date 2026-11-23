@@ -103,20 +103,16 @@ device, so those endpoints only work on the demonstration laptop itself.
 
 ## How to Run Locally
 
-### Option A: Via the Web Launcher
-From the repository root, start the FastAPI backend and the Flutter application:
-```powershell
-powershell -ExecutionPolicy Bypass -File .\frontend\run_web.ps1
-```
-This currently targets Chrome, and the web build does not compile (`tflite_flutter` and
-`sherpa_onnx` need `dart:ffi`). Run the app on an Android device or emulator instead.
-
-### Option B: Directly with Uvicorn
+### Start the API with Uvicorn
 From the `backend` folder:
 ```powershell
-.\.venv\Scripts\activate
-uvicorn server:app --host 0.0.0.0 --port 5000 --reload
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m uvicorn server:app --host 0.0.0.0 --port 5000 --reload
 ```
+
+The Flutter app runs separately on Android. See [the frontend run guide](../frontend/README.md).
 
 ---
 

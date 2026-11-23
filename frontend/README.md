@@ -1,36 +1,25 @@
-# TinigSenyas: Filipino Sign Language (FSL) Translation & E-Learning Module
+# TinigSenyas Flutter App
 
-TinigSenyas is an interactive capstone project designed to bridge communication gaps for the Filipino deaf and hard-of-hearing community using real-time AI tracking and speech translation.
+The mobile client provides offline FSL recognition from the model bundle in
+`assets/model`, speech-to-text, text-to-speech, history, settings, and sign
+animation assets. The supported runtime is Android. The web build is not
+supported because the on-device inference packages require `dart:ffi`.
 
-## 🚀 Key Features
-- **Sign-to-Text:** Real-time computer vision tracking for hand gestures via Python backend and Flask streaming.
-- **Speech-to-Text:** Live browser-native voice transcription rendered into interactive chat bubbles.
-- **Local Database:** SQLite integration for seamless translation history tracking.
-- **Accessibility:** Built-in dark mode and adjustable typography scaling.
+## Run on Android
 
-## 🛠️ Tech Stack
-- **Frontend:** Flutter (Web/Desktop)
-- **Backend:** Python, Flask, OpenCV, MediaPipe
-- **Database:** SQLite
+From this directory:
 
-## Text-to-Speech
+```powershell
+flutter pub get
+flutter devices
+flutter run -d DEVICE_ID
+```
 
-On Chrome, Settings automatically detects the local speech backend. Run
-`powershell -ExecutionPolicy Bypass -File .\frontend\run_web.ps1` from the
-repository root to start the backend and app; no per-user Azure key, server
-URL, or token is needed for local development.
-Online Filipino speech uses Microsoft's Filipino neural voices and requires
-internet access. Speech text is sent to Microsoft's service through the
-backend; the fallback `edge-tts` client is unofficial and may stop working if
-the provider changes its service. For hosted deployments, configure the backend
-with the app's origin so users do not need to enter connection settings. Azure
-Speech credentials stay on the backend.
-Offline playback uses Filipino voices installed in the device's system TTS
-engine. Android can optionally download the Kokoro English neural voice pack
-from Settings (about 147 MB; about 194 MB installed). After download it works
-offline and offers three female English voices alongside the system voices.
-Select English (US) and the English female source to use it; it does not replace
-the Filipino device voice. Kokoro-82M-v1.1-zh's weights are licensed under
-Apache-2.0; the pack is published by the
-[sherpa-onnx project](https://github.com/k2-fsa/sherpa-onnx) and downloaded on
-demand rather than bundled in the APK.
+Replace `DEVICE_ID` with an Android device or emulator ID returned by `flutter devices`.
+The release builder writes the single Android APK to
+`build/app/outputs/flutter-apk/app-release.apk`.
+
+The FastAPI backend is optional for offline sign recognition. To run backend
+features, follow [the backend setup guide](../backend/README.md) and configure
+its environment using `../backend/.env.example`. Keep real tokens in the
+backend environment; never put them in the mobile app or commit them.

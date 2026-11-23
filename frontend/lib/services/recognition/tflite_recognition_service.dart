@@ -23,9 +23,9 @@ class TfliteRecognitionService implements RecognitionService {
   final _landmarkStreamController =
       StreamController<List<List<Offset>>>.broadcast();
 
-  Interpreter? _fslModelInterpreter;
-  Interpreter? _alphabetInterpreter;
-  Interpreter? _medicalModelInterpreter;
+  _ModelRunner? _fslModelInterpreter;
+  _ModelRunner? _alphabetInterpreter;
+  _ModelRunner? _medicalModelInterpreter;
   HandLandmarkerPlugin? _handLandmarker;
   StreamSubscription<List<Hand>>? _handSubscription;
   Completer<List<Hand>>? _pendingHandFrame;
@@ -33,6 +33,14 @@ class TfliteRecognitionService implements RecognitionService {
   DateTime? _poseLandmarksUpdatedAt;
   bool _poseLandmarkerReady = false;
   int _poseFrameCounter = 0;
+  int _poseRequestGeneration = 0;
+  bool _poseInferenceInFlight = false;
+  bool _modelsReloading = false;
+  bool _modelInferenceInFlight = false;
+  int _recognitionEpoch = 0;
+  Future<void>? _reloadModelsTask;
+  DateTime? _lastAlphabetInferenceAt;
+  DateTime? _lastMedicalInferenceAt;
 
   List<String> _fslLabels = [];
   List<String> _medicalLabels = [];
@@ -48,6 +56,7 @@ class TfliteRecognitionService implements RecognitionService {
   set mode(RecognitionMode val) {
     if (_mode == val) return;
     _mode = val;
+    _recognitionEpoch++;
     _alphaProbHistory.clear();
     _alphaCandidate = null;
     _alphaCandidateCount = 0;
@@ -56,15 +65,18 @@ class TfliteRecognitionService implements RecognitionService {
     _fslProbHistory.clear();
     _fslCandidate = null;
     _fslCandidateCount = 0;
-    _fslEmittedLabel = null;
     _fslReleaseFrameCount = 0;
     _medProbHistory.clear();
     _medCandidate = null;
     _medCandidateCount = 0;
-    _medEmittedLabel = null;
+    _phraseGestureConsumed = false;
+    _medicalGestureConsumed = false;
     _sequenceBuffer.clear();
     _lastGestureMotionAt = null;
+    _lastAlphabetInferenceAt = null;
+    _lastMedicalInferenceAt = null;
     _motionRouteActive = false;
+    _autoPhraseRouteActive = false;
     _lastPhraseInferenceAt = null;
   }
 
@@ -74,6 +86,7 @@ class TfliteRecognitionService implements RecognitionService {
   int _missingHandFrames = 0;
   int _lastTrackedHandCount = 0;
   bool _motionRouteActive = false;
+  bool _autoPhraseRouteActive = false;
 
   // Exponential Moving Average (EMA) landmark smoothing
   List<(double, double, double)>? _smoothedPrimaryHand;
@@ -85,11 +98,13 @@ class TfliteRecognitionService implements RecognitionService {
   final List<List<double>> _alphaProbHistory = [];
   final List<List<double>> _fslProbHistory = [];
   final List<List<double>> _medProbHistory = [];
-  static const int _alphaProbHistorySize = 5;
-  static const int _probHistorySize = 5;
+  static const int _alphaProbHistorySize = 3;
   static const int _phraseProbHistorySize = 3;
-  static const int _phraseStableFrames = 3;
-  static const Duration _phraseInferenceInterval = Duration(milliseconds: 100);
+  static const int _alphabetStableInferences = 3;
+  static const int _phraseStableInferences = 3;
+  static const Duration _alphabetInferenceInterval = Duration(milliseconds: 66);
+  static const Duration _phraseInferenceInterval = Duration(milliseconds: 120);
+  static const Duration _medicalInferenceInterval = Duration(milliseconds: 160);
   static const double _paperMinimumConfidence = 0.60;
   static const double _paperMinimumMargin = 0.12;
   static const double _paperHighConfidence = 0.75;
@@ -108,19 +123,17 @@ class TfliteRecognitionService implements RecognitionService {
   double _poseNormalizationScale = 0.20;
 
   // Debouncing / Stability state
-  String? _lastEmittedLabel;
-  DateTime _lastEmittedTime = DateTime.fromMillisecondsSinceEpoch(0);
   String? _alphaCandidate;
   int _alphaCandidateCount = 0;
   String? _alphaEmittedLabel;
   int _alphaReleaseFrameCount = 0;
   String? _fslCandidate;
   int _fslCandidateCount = 0;
-  String? _fslEmittedLabel;
   int _fslReleaseFrameCount = 0;
   String? _medCandidate;
   int _medCandidateCount = 0;
-  String? _medEmittedLabel;
+  bool _phraseGestureConsumed = false;
+  bool _medicalGestureConsumed = false;
 
   // Trajectory tracking for dynamic fingerspelled letter 'J'
   final List<(double, double, bool)> _jTrajectory = [];
@@ -140,6 +153,20 @@ class TfliteRecognitionService implements RecognitionService {
   bool get _hasRecentGestureActivity =>
       _lastGestureMotionAt != null &&
       DateTime.now().difference(_lastGestureMotionAt!) <= _gestureSettleWindow;
+
+  void _runModelInference(Future<void> Function() inference) {
+    if (_modelInferenceInFlight || _modelsReloading) return;
+    _modelInferenceInFlight = true;
+    unawaited(() async {
+      try {
+        await inference();
+      } catch (error) {
+        debugPrint('[TfliteRecognitionService] Model inference failed: $error');
+      } finally {
+        _modelInferenceInFlight = false;
+      }
+    }());
+  }
 
   @override
   bool get isModelReady {
@@ -254,7 +281,7 @@ class TfliteRecognitionService implements RecognitionService {
     return const [];
   }
 
-  Future<Interpreter?> _loadValidatedInterpreter({
+  Future<_ModelRunner?> _loadValidatedInterpreter({
     required String modelName,
     required File? localFile,
     required String assetPath,
@@ -272,6 +299,7 @@ class TfliteRecognitionService implements RecognitionService {
 
     for (final load in loaders) {
       Interpreter? interpreter;
+      IsolateInterpreter? worker;
       try {
         interpreter = await load();
         interpreter.allocateTensors();
@@ -287,8 +315,13 @@ class TfliteRecognitionService implements RecognitionService {
           '[TfliteRecognitionService] $modelName connected: '
           '$actualInput -> $actualOutput.',
         );
-        return interpreter;
+        worker = await IsolateInterpreter.create(
+          address: interpreter.address,
+          debugName: 'TinigSenyas-$modelName',
+        );
+        return _ModelRunner(interpreter, worker);
       } catch (error) {
+        if (worker != null) await worker.close();
         interpreter?.close();
         debugPrint(
           '[TfliteRecognitionService] $modelName load failed; trying next source: $error',
@@ -296,6 +329,15 @@ class TfliteRecognitionService implements RecognitionService {
       }
     }
     return null;
+  }
+
+  Future<void> _closeModel(_ModelRunner? model) async {
+    if (model == null) return;
+    try {
+      await model.worker.close();
+    } finally {
+      model.interpreter.close();
+    }
   }
 
   @override
@@ -366,8 +408,19 @@ class TfliteRecognitionService implements RecognitionService {
 
   /// Hot-reloads models from local storage (Google Maps style OTA update) or bundled assets
   @override
-  Future<void> reloadModels() async {
+  Future<void> reloadModels() {
+    return _reloadModelsTask ??= _reloadModelsInternal().whenComplete(() {
+      _reloadModelsTask = null;
+    });
+  }
+
+  Future<void> _reloadModelsInternal() async {
+    _modelsReloading = true;
+    _clearTemporalTrackingData();
     try {
+      while (_isProcessingFrame || _modelInferenceInFlight) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
       Directory? modelsDir;
       if (!kIsWeb) {
         final appDir = await getApplicationDocumentsDirectory();
@@ -414,12 +467,10 @@ class TfliteRecognitionService implements RecognitionService {
         modelName: 'alphabet',
       );
 
-      _alphabetInterpreter?.close();
-      _alphabetInterpreter = null;
       final localAlphaFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'fsl_alphabet.tflite'))
           : null;
-      _alphabetInterpreter = await _loadValidatedInterpreter(
+      final loadedAlphabet = await _loadValidatedInterpreter(
         modelName: 'alphabet',
         localFile: localAlphaFile,
         assetPath: 'assets/model/fsl_alphabet.tflite',
@@ -427,34 +478,45 @@ class TfliteRecognitionService implements RecognitionService {
         outputShape: const [1, _alphabetClassCount],
         options: InterpreterOptions()..threads = 2,
       );
+      if (loadedAlphabet != null) {
+        final previous = _alphabetInterpreter;
+        _alphabetInterpreter = loadedAlphabet;
+        await _closeModel(previous);
+      }
 
-      _fslModelInterpreter?.close();
-      _fslModelInterpreter = null;
       final localModelFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'fsl_model.tflite'))
           : null;
-      _fslModelInterpreter = await _loadValidatedInterpreter(
+      final loadedConversational = await _loadValidatedInterpreter(
         modelName: 'conversational ST-GCN',
         localFile: localModelFile,
         assetPath: 'assets/model/fsl_model.tflite',
         inputShape: const [1, 60, 75, 3],
         outputShape: [1, _conversationalClassCount],
-        options: InterpreterOptions()..threads = 4,
+        options: InterpreterOptions()..threads = 2,
       );
+      if (loadedConversational != null) {
+        final previous = _fslModelInterpreter;
+        _fslModelInterpreter = loadedConversational;
+        await _closeModel(previous);
+      }
 
-      _medicalModelInterpreter?.close();
-      _medicalModelInterpreter = null;
       final localMedModelFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'fsl_medical.tflite'))
           : null;
-      _medicalModelInterpreter = await _loadValidatedInterpreter(
+      final loadedMedical = await _loadValidatedInterpreter(
         modelName: 'medical ST-GCN',
         localFile: localMedModelFile,
         assetPath: 'assets/model/fsl_medical.tflite',
         inputShape: const [1, 60, 75, 3],
         outputShape: [1, _medicalClassCount],
-        options: InterpreterOptions()..threads = 4,
+        options: InterpreterOptions()..threads = 2,
       );
+      if (loadedMedical != null) {
+        final previous = _medicalModelInterpreter;
+        _medicalModelInterpreter = loadedMedical;
+        await _closeModel(previous);
+      }
 
       debugPrint(
         '[TfliteRecognitionService] Model connection status: '
@@ -464,6 +526,8 @@ class TfliteRecognitionService implements RecognitionService {
       );
     } catch (e) {
       debugPrint('[TfliteRecognitionService] Error reloading models: $e');
+    } finally {
+      _modelsReloading = false;
     }
   }
 
@@ -498,6 +562,7 @@ class TfliteRecognitionService implements RecognitionService {
   @override
   Future<void> stop() async {
     _isRunning = false;
+    _poseRequestGeneration++;
     _handSubscription?.cancel();
     _handSubscription = null;
     _pendingHandFrame = null;
@@ -516,7 +581,7 @@ class TfliteRecognitionService implements RecognitionService {
     int? sensorOrientation,
     bool? isFrontCamera,
   }) async {
-    if (!_isRunning || !_isInitialized) return;
+    if (!_isRunning || !_isInitialized || _modelsReloading) return;
     if (_isProcessingFrame) return;
 
     final nextSensorOrientation = sensorOrientation ?? _sensorOrientation;
@@ -525,6 +590,7 @@ class TfliteRecognitionService implements RecognitionService {
         nextIsFrontCamera != _isFrontCamera) {
       _sensorOrientation = nextSensorOrientation;
       _isFrontCamera = nextIsFrontCamera;
+      _poseRequestGeneration++;
       _poseLandmarks = null;
       _poseLandmarksUpdatedAt = null;
       _poseFrameCounter = 0;
@@ -540,10 +606,10 @@ class TfliteRecognitionService implements RecognitionService {
     _isProcessingFrame = true;
     try {
       _poseFrameCounter++;
+      // Keep pose inference at one frame in four, but run it independently so
+      // a slow pose frame cannot stall hand tracking or block camera updates.
       if (_poseLandmarkerReady && _poseFrameCounter % 4 == 1) {
-        final detectedPose = await _detectPoseLandmarks(image);
-        _poseLandmarks = detectedPose;
-        _poseLandmarksUpdatedAt = detectedPose == null ? null : DateTime.now();
+        _schedulePoseInference(image);
       } else if (_poseLandmarksUpdatedAt != null &&
           DateTime.now().difference(_poseLandmarksUpdatedAt!) >
               const Duration(milliseconds: 600)) {
@@ -555,7 +621,7 @@ class TfliteRecognitionService implements RecognitionService {
       _pendingHandFrame = pending;
       handLandmarker.processFrame(image, _sensorOrientation);
       final hands = await pending.future.timeout(
-        const Duration(milliseconds: 700),
+        const Duration(milliseconds: 300),
         onTimeout: () {
           debugPrint(
             '[TfliteRecognitionService] Hand Landmarker frame timed out.',
@@ -573,23 +639,55 @@ class TfliteRecognitionService implements RecognitionService {
     }
   }
 
-  Future<List<Landmark>?> _detectPoseLandmarks(CameraImage image) async {
-    if (image.planes.length < 3) return null;
+  void _schedulePoseInference(CameraImage image) {
+    if (_poseInferenceInFlight || image.planes.length < 3) return;
+
     final yPlane = image.planes[0];
     final uPlane = image.planes[1];
     final vPlane = image.planes[2];
+    final frame = _PoseFrame(
+      yPlane: Uint8List.fromList(yPlane.bytes),
+      uPlane: Uint8List.fromList(uPlane.bytes),
+      vPlane: Uint8List.fromList(vPlane.bytes),
+      width: image.width,
+      height: image.height,
+      yRowStride: yPlane.bytesPerRow,
+      uvRowStride: uPlane.bytesPerRow,
+      uvPixelStride: uPlane.bytesPerPixel ?? 1,
+      rotation: _sensorOrientation,
+    );
+    final generation = _poseRequestGeneration;
+    _poseInferenceInFlight = true;
+    unawaited(() async {
+      try {
+        final pose = await _detectPoseLandmarks(frame);
+        if (_isRunning &&
+            generation == _poseRequestGeneration &&
+            pose != null) {
+          _poseLandmarks = pose;
+          _poseLandmarksUpdatedAt = DateTime.now();
+        }
+      } catch (error) {
+        debugPrint('[TfliteRecognitionService] Pose inference failed: $error');
+      } finally {
+        _poseInferenceInFlight = false;
+      }
+    }());
+  }
+
+  Future<List<Landmark>?> _detectPoseLandmarks(_PoseFrame frame) async {
     try {
       final raw = await _poseLandmarkerChannel
           .invokeMethod<List<dynamic>>('detect', {
-            'yPlane': yPlane.bytes,
-            'uPlane': uPlane.bytes,
-            'vPlane': vPlane.bytes,
-            'width': image.width,
-            'height': image.height,
-            'yRowStride': yPlane.bytesPerRow,
-            'uvRowStride': uPlane.bytesPerRow,
-            'uvPixelStride': uPlane.bytesPerPixel ?? 1,
-            'rotation': _sensorOrientation,
+            'yPlane': frame.yPlane,
+            'uPlane': frame.uPlane,
+            'vPlane': frame.vPlane,
+            'width': frame.width,
+            'height': frame.height,
+            'yRowStride': frame.yRowStride,
+            'uvRowStride': frame.uvRowStride,
+            'uvPixelStride': frame.uvPixelStride,
+            'rotation': frame.rotation,
             'timestampMs': DateTime.now().millisecondsSinceEpoch,
           });
       if (raw == null || raw.length != 33) return null;
@@ -610,8 +708,7 @@ class TfliteRecognitionService implements RecognitionService {
         pose.add(Landmark(x, y, z));
       }
       return pose;
-    } catch (e) {
-      debugPrint('[TfliteRecognitionService] Pose inference failed: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -715,6 +812,7 @@ class TfliteRecognitionService implements RecognitionService {
   }
 
   void _clearTemporalTrackingData({bool preserveAlphabetEmission = false}) {
+    _recognitionEpoch++;
     _sequenceBuffer.clear();
     _poseNormalizationCenter = (0.5, 0.5, 0.0);
     _poseNormalizationScale = 0.20;
@@ -727,19 +825,22 @@ class TfliteRecognitionService implements RecognitionService {
     _lastWrist = null;
     _lastWristTimestamp = null;
     _motionRouteActive = false;
+    _autoPhraseRouteActive = false;
     _alphaCandidate = null;
     _alphaCandidateCount = 0;
     if (!preserveAlphabetEmission) _alphaEmittedLabel = null;
     _alphaReleaseFrameCount = 0;
     _fslCandidate = null;
     _fslCandidateCount = 0;
-    _fslEmittedLabel = null;
     _fslReleaseFrameCount = 0;
     _medCandidate = null;
     _medCandidateCount = 0;
-    _medEmittedLabel = null;
+    _phraseGestureConsumed = false;
+    _medicalGestureConsumed = false;
     _lastGestureMotionAt = null;
     _lastPhraseInferenceAt = null;
+    _lastAlphabetInferenceAt = null;
+    _lastMedicalInferenceAt = null;
     _jTrajectory.clear();
   }
 
@@ -802,6 +903,7 @@ class TfliteRecognitionService implements RecognitionService {
     // temporal window instead of mixing those different inputs together.
     if (_lastTrackedHandCount != 0 &&
         _lastTrackedHandCount != transformedHands.length) {
+      _recognitionEpoch++;
       _sequenceBuffer.clear();
       _alphaProbHistory.clear();
       _fslProbHistory.clear();
@@ -810,17 +912,18 @@ class TfliteRecognitionService implements RecognitionService {
       _lastWrist = null;
       _lastWristTimestamp = null;
       _motionRouteActive = false;
+      _autoPhraseRouteActive = false;
       _alphaCandidate = null;
       _alphaCandidateCount = 0;
       _alphaEmittedLabel = null;
       _alphaReleaseFrameCount = 0;
       _fslCandidate = null;
       _fslCandidateCount = 0;
-      _fslEmittedLabel = null;
       _fslReleaseFrameCount = 0;
       _medCandidate = null;
       _medCandidateCount = 0;
-      _medEmittedLabel = null;
+      _phraseGestureConsumed = false;
+      _medicalGestureConsumed = false;
     }
     _lastTrackedHandCount = transformedHands.length;
 
@@ -872,6 +975,9 @@ class TfliteRecognitionService implements RecognitionService {
       if (_restZoneFrameCount >= _restZoneThreshold) {
         if (!_isPaused && !_manualPaused) {
           _isPaused = true;
+          _recognitionEpoch++;
+          _phraseGestureConsumed = false;
+          _medicalGestureConsumed = false;
           _pauseStatusController.add(true);
         }
         _sequenceBuffer.clear();
@@ -884,17 +990,16 @@ class TfliteRecognitionService implements RecognitionService {
         _lastWrist = null;
         _lastWristTimestamp = null;
         _motionRouteActive = false;
+        _autoPhraseRouteActive = false;
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
         _alphaEmittedLabel = null;
         _alphaReleaseFrameCount = 0;
         _fslCandidate = null;
         _fslCandidateCount = 0;
-        _fslEmittedLabel = null;
         _fslReleaseFrameCount = 0;
         _medCandidate = null;
         _medCandidateCount = 0;
-        _medEmittedLabel = null;
         _lastGestureMotionAt = null;
       }
       return; // Skip inference while hands are resting
@@ -903,6 +1008,9 @@ class TfliteRecognitionService implements RecognitionService {
       _restZoneFrameCount = 0;
       if (_isPaused && !_manualPaused) {
         _isPaused = false;
+        _recognitionEpoch++;
+        _phraseGestureConsumed = false;
+        _medicalGestureConsumed = false;
         _pauseStatusController.add(false);
       }
     }
@@ -960,6 +1068,22 @@ class TfliteRecognitionService implements RecognitionService {
       _motionRouteActive = true;
     }
 
+    if (_mode == RecognitionMode.auto) {
+      final usePhraseModel = smoothedHands.length >= 2 || _motionRouteActive;
+      if (usePhraseModel != _autoPhraseRouteActive) {
+        _autoPhraseRouteActive = usePhraseModel;
+        _recognitionEpoch++;
+        _alphaProbHistory.clear();
+        _alphaCandidate = null;
+        _alphaCandidateCount = 0;
+        _alphaEmittedLabel = null;
+        _fslProbHistory.clear();
+        _fslCandidate = null;
+        _fslCandidateCount = 0;
+        _phraseGestureConsumed = false;
+      }
+    }
+
     // 5. Accumulate a model-compatible body and hand sequence. The ST-GCN
     // was trained with all 33 MediaPipe pose landmarks plus both hand slots.
     if (poseLandmarks != null && poseLandmarks.length == 33) {
@@ -987,6 +1111,7 @@ class TfliteRecognitionService implements RecognitionService {
       if (_jTrajectory.length > 30) _jTrajectory.removeAt(0);
 
       if (_jCooldown == 0 && _alphaEmittedLabel != 'J' && _detectJGesture()) {
+        _recognitionEpoch++;
         _jCooldown = 24; // Debounce ~0.8s
         _jTrajectory.clear();
         _sequenceBuffer.clear();
@@ -996,8 +1121,6 @@ class TfliteRecognitionService implements RecognitionService {
         _alphaEmittedLabel = 'J';
         _alphaReleaseFrameCount = 0;
         final now = DateTime.now();
-        _lastEmittedLabel = 'J';
-        _lastEmittedTime = now;
         _predictionsController.add(
           SignResult(
             label: 'J',
@@ -1140,11 +1263,21 @@ class TfliteRecognitionService implements RecognitionService {
 
   /// Normalizes 21 3D hand coordinates (centered at wrist, scaled by max radius) and runs fsl_alphabet.tflite
   void _evaluateAlphabet(List<(double, double, double)> lms) {
-    if (_alphabetInterpreter == null || _isPaused) return;
+    final model = _alphabetInterpreter;
+    if (model == null || _isPaused || _modelsReloading) return;
+    final now = DateTime.now();
+    if (_modelInferenceInFlight ||
+        (_lastAlphabetInferenceAt != null &&
+            now.difference(_lastAlphabetInferenceAt!) <
+                _alphabetInferenceInterval)) {
+      return;
+    }
 
     final wrist = lms[0];
     // Active signing space check: skip if hand is resting at the very bottom
     if (wrist.$2 > 0.92) return;
+    _lastAlphabetInferenceAt = now;
+    final epoch = _recognitionEpoch;
 
     // Canonical Right-Hand Alignment:
     // In fsl_alphabet.tflite training data (canonical right hand palm facing camera):
@@ -1178,8 +1311,16 @@ class TfliteRecognitionService implements RecognitionService {
     final input = [flat63];
     final output = [List<double>.filled(_alphabetLabels.length, 0.0)];
 
-    try {
-      _alphabetInterpreter!.run(input, output);
+    _runModelInference(() async {
+      await model.run(input, output);
+      if (!_isRunning ||
+          _isPaused ||
+          epoch != _recognitionEpoch ||
+          (_mode != RecognitionMode.alphabet &&
+              _mode != RecognitionMode.auto)) {
+        return;
+      }
+
       final rawProbs = output[0];
       if (rawProbs.length != _alphabetLabels.length) {
         debugPrint(
@@ -1227,18 +1368,17 @@ class TfliteRecognitionService implements RecognitionService {
           _alphaCandidateCount = 1;
         }
 
-        // Five stable frames filter brief class flicker while keeping input
-        // responsive at normal camera frame rates.
-        if (_alphaCandidateCount >= 5 && letter != _alphaEmittedLabel) {
-          final now = DateTime.now();
+        // Three stable, rate-limited inference results suppress frame flicker
+        // without waiting for every camera frame to run the model.
+        if (_alphaCandidateCount >= _alphabetStableInferences &&
+            letter != _alphaEmittedLabel) {
+          final predictionTime = DateTime.now();
           _alphaEmittedLabel = letter;
-          _lastEmittedLabel = letter;
-          _lastEmittedTime = now;
           _predictionsController.add(
             SignResult(
               label: letter,
               confidence: top1Prob,
-              timestamp: now,
+              timestamp: predictionTime,
               source: 'fsl_alphabet_model',
             ),
           );
@@ -1247,13 +1387,14 @@ class TfliteRecognitionService implements RecognitionService {
         _alphaCandidate = null;
         _alphaCandidateCount = 0;
         _alphaReleaseFrameCount++;
-        if (_alphaReleaseFrameCount >= 8) {
+        // Require a sustained uncertain/released hand before re-arming the
+        // same letter. Brief confidence dips no longer append A repeatedly.
+        if (_alphaReleaseFrameCount >= 6) {
           _alphaEmittedLabel = null;
+          _alphaProbHistory.clear();
         }
       }
-    } catch (e) {
-      debugPrint('[TfliteRecognitionService] Alphabet inference error: $e');
-    }
+    });
   }
 
   /// Builds the exact 75-joint input layout used by ST-GCN training:
@@ -1338,98 +1479,103 @@ class TfliteRecognitionService implements RecognitionService {
 
   /// Runs 103-class ST-GCN conversational model on continuous sequence buffer
   void _evaluateConversationalSign() {
-    if (_fslModelInterpreter == null || _fslLabels.isEmpty || _isPaused) return;
+    final model = _fslModelInterpreter;
+    if (model == null ||
+        _fslLabels.isEmpty ||
+        _isPaused ||
+        _modelsReloading ||
+        _phraseGestureConsumed ||
+        _modelInferenceInFlight ||
+        _sequenceBuffer.length < 24 ||
+        !_hasRecentGestureActivity) {
+      return;
+    }
 
-    // Keep evaluating through the deliberate end hold so the classifier sees
-    // the completed sign and can settle before the signer lowers their hands.
-    if (_sequenceBuffer.length >= 24 && _hasRecentGestureActivity) {
-      final now = DateTime.now();
-      if (_lastPhraseInferenceAt != null &&
-          now.difference(_lastPhraseInferenceAt!) < _phraseInferenceInterval) {
+    final now = DateTime.now();
+    if (_lastPhraseInferenceAt != null &&
+        now.difference(_lastPhraseInferenceAt!) < _phraseInferenceInterval) {
+      return;
+    }
+    _lastPhraseInferenceAt = now;
+    final epoch = _recognitionEpoch;
+    // Flatten to a typed float buffer before sending to the worker. This avoids
+    // thousands of short-lived nested lists on the camera/UI isolate.
+    final input = _resampleSequence(_sequenceBuffer, _targetSequenceLength);
+    final output = [List<double>.filled(_fslLabels.length, 0.0)];
+
+    _runModelInference(() async {
+      await model.run(input, output);
+      final routeStillPhrase =
+          _mode == RecognitionMode.phrases ||
+          (_mode == RecognitionMode.auto &&
+              (_lastTrackedHandCount >= 2 || _motionRouteActive));
+      if (!_isRunning ||
+          _isPaused ||
+          _modelsReloading ||
+          epoch != _recognitionEpoch ||
+          !routeStillPhrase ||
+          _phraseGestureConsumed) {
         return;
       }
-      _lastPhraseInferenceAt = now;
 
-      try {
-        final seqInput = _resampleSequence(
-          _sequenceBuffer,
-          _targetSequenceLength,
+      final rawProbs = output[0];
+      if (rawProbs.length != _fslLabels.length) {
+        debugPrint(
+          '[TfliteRecognitionService] Phrase model output count does not match its labels.',
         );
-        final input = [seqInput];
-        final output = [List<double>.filled(_fslLabels.length, 0.0)];
-
-        _fslModelInterpreter!.run(input, output);
-        final rawProbs = output[0];
-
-        // Rolling probability distribution smoothing (eliminates single-frame noise)
-        _fslProbHistory.add(rawProbs);
-        if (_fslProbHistory.length > _phraseProbHistorySize) {
-          _fslProbHistory.removeAt(0);
-        }
-
-        final probs = List<double>.filled(_fslLabels.length, 0.0);
-        for (final p in _fslProbHistory) {
-          for (int i = 0; i < p.length; i++) {
-            probs[i] += p[i] / _fslProbHistory.length;
-          }
-        }
-
-        int top1Idx = 0;
-        double top1Prob = probs[0];
-        double top2Prob = 0.0;
-
-        for (int i = 1; i < probs.length; i++) {
-          if (probs[i] > top1Prob) {
-            top2Prob = top1Prob;
-            top1Prob = probs[i];
-            top1Idx = i;
-          } else if (probs[i] > top2Prob) {
-            top2Prob = probs[i];
-          }
-        }
-
-        if (_passesPaperConfidenceGate(top1Prob, top2Prob) &&
-            top1Idx < _fslLabels.length) {
-          final rawWord = _fslLabels[top1Idx];
-          final displayWord = _formatFslPhrase(rawWord);
-
-          if (displayWord == _fslCandidate) {
-            _fslCandidateCount++;
-          } else {
-            _fslCandidate = displayWord;
-            _fslCandidateCount = 1;
-          }
-
-          // Commit only after the same phrase remains the leading class for
-          // several evaluations, preventing transition frames from flashing
-          // different words into the transcript.
-          if (_fslCandidateCount >= _phraseStableFrames &&
-              displayWord != _fslEmittedLabel) {
-            final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
-            final requiredDelay = 700;
-
-            if (elapsed > requiredDelay) {
-              _lastEmittedLabel = displayWord;
-              _fslEmittedLabel = displayWord;
-              _lastEmittedTime = now;
-              _predictionsController.add(
-                SignResult(
-                  label: displayWord,
-                  confidence: top1Prob,
-                  timestamp: now,
-                  source: 'st_gcn_model',
-                ),
-              );
-            }
-          }
-        } else {
-          _fslCandidate = null;
-          _fslCandidateCount = 0;
-        }
-      } catch (e) {
-        debugPrint('[TfliteRecognitionService] ST-GCN inference error: $e');
+        return;
       }
-    }
+      _fslProbHistory.add(List<double>.from(rawProbs));
+      if (_fslProbHistory.length > _phraseProbHistorySize) {
+        _fslProbHistory.removeAt(0);
+      }
+
+      final probs = List<double>.filled(_fslLabels.length, 0.0);
+      for (final frameProbs in _fslProbHistory) {
+        for (var i = 0; i < frameProbs.length; i++) {
+          probs[i] += frameProbs[i] / _fslProbHistory.length;
+        }
+      }
+
+      var top1Idx = 0;
+      var top1Prob = probs[0];
+      var top2Prob = 0.0;
+      for (var i = 1; i < probs.length; i++) {
+        if (probs[i] > top1Prob) {
+          top2Prob = top1Prob;
+          top1Prob = probs[i];
+          top1Idx = i;
+        } else if (probs[i] > top2Prob) {
+          top2Prob = probs[i];
+        }
+      }
+
+      if (_passesPaperConfidenceGate(top1Prob, top2Prob)) {
+        final displayWord = _formatFslPhrase(_fslLabels[top1Idx]);
+        if (displayWord == _fslCandidate) {
+          _fslCandidateCount++;
+        } else {
+          _fslCandidate = displayWord;
+          _fslCandidateCount = 1;
+        }
+
+        if (_fslCandidateCount >= _phraseStableInferences) {
+          final predictionTime = DateTime.now();
+          _phraseGestureConsumed = true;
+          _predictionsController.add(
+            SignResult(
+              label: displayWord,
+              confidence: top1Prob,
+              timestamp: predictionTime,
+              source: 'st_gcn_model',
+            ),
+          );
+        }
+      } else {
+        _fslCandidate = null;
+        _fslCandidateCount = 0;
+      }
+    });
   }
 
   /// Formats raw FSL class names to clear, user-friendly labels with English translations
@@ -1472,105 +1618,105 @@ class TfliteRecognitionService implements RecognitionService {
 
   /// Evaluates 60-frame ST-GCN sequence using the dedicated 35-class Medical FSL model.
   void _evaluateMedicalSign() {
-    if (_medicalModelInterpreter == null ||
+    final model = _medicalModelInterpreter;
+    if (model == null ||
         _medicalLabels.isEmpty ||
-        _isPaused) {
+        _isPaused ||
+        _modelsReloading ||
+        _medicalGestureConsumed ||
+        _modelInferenceInFlight ||
+        _sequenceBuffer.length < 24 ||
+        !_hasRecentGestureActivity) {
       return;
     }
 
-    if (_sequenceBuffer.length >= 24 && _hasRecentGestureActivity) {
-      try {
-        final seqInput = _resampleSequence(
-          _sequenceBuffer,
-          _targetSequenceLength,
+    final now = DateTime.now();
+    if (_lastMedicalInferenceAt != null &&
+        now.difference(_lastMedicalInferenceAt!) < _medicalInferenceInterval) {
+      return;
+    }
+    _lastMedicalInferenceAt = now;
+    final epoch = _recognitionEpoch;
+    final input = _resampleSequence(_sequenceBuffer, _targetSequenceLength);
+    final output = [List<double>.filled(_medicalLabels.length, 0.0)];
+
+    _runModelInference(() async {
+      await model.run(input, output);
+      if (!_isRunning ||
+          _isPaused ||
+          _modelsReloading ||
+          epoch != _recognitionEpoch ||
+          _mode != RecognitionMode.medical ||
+          _medicalGestureConsumed) {
+        return;
+      }
+
+      final rawProbs = output[0];
+      if (rawProbs.length != _medicalLabels.length) {
+        debugPrint(
+          '[TfliteRecognitionService] Medical model output count does not match its labels.',
         );
-        final input = [seqInput];
-        final output = [List<double>.filled(_medicalLabels.length, 0.0)];
+        return;
+      }
+      _medProbHistory.add(List<double>.from(rawProbs));
+      if (_medProbHistory.length > _phraseProbHistorySize) {
+        _medProbHistory.removeAt(0);
+      }
 
-        _medicalModelInterpreter!.run(input, output);
-        final rawProbs = output[0];
-
-        // Rolling probability distribution smoothing
-        _medProbHistory.add(rawProbs);
-        if (_medProbHistory.length > _probHistorySize) {
-          _medProbHistory.removeAt(0);
+      final probs = List<double>.filled(_medicalLabels.length, 0.0);
+      for (final frameProbs in _medProbHistory) {
+        for (var i = 0; i < frameProbs.length; i++) {
+          probs[i] += frameProbs[i] / _medProbHistory.length;
         }
+      }
 
-        final probs = List<double>.filled(_medicalLabels.length, 0.0);
-        for (final p in _medProbHistory) {
-          for (int i = 0; i < p.length; i++) {
-            probs[i] += p[i] / _medProbHistory.length;
-          }
+      var top1Idx = 0;
+      var top1Prob = probs[0];
+      var top2Prob = 0.0;
+      for (var i = 1; i < probs.length; i++) {
+        if (probs[i] > top1Prob) {
+          top2Prob = top1Prob;
+          top1Prob = probs[i];
+          top1Idx = i;
+        } else if (probs[i] > top2Prob) {
+          top2Prob = probs[i];
         }
+      }
 
-        int top1Idx = 0;
-        double top1Prob = probs[0];
-        double top2Prob = 0.0;
-
-        for (int i = 1; i < probs.length; i++) {
-          if (probs[i] > top1Prob) {
-            top2Prob = top1Prob;
-            top1Prob = probs[i];
-            top1Idx = i;
-          } else if (probs[i] > top2Prob) {
-            top2Prob = probs[i];
-          }
-        }
-
-        if (_passesPaperConfidenceGate(top1Prob, top2Prob) &&
-            top1Idx < _medicalLabels.length) {
-          final rawWord = _medicalLabels[top1Idx];
-          // The training metadata currently names outputs 18–25 with
-          // placeholders. Keep those model outputs from being presented as
-          // if they were real FSL medical signs until verified labels exist.
-          if (RegExp(r'^Medical_\d+$').hasMatch(rawWord)) {
-            debugPrint(
-              '[TfliteRecognitionService] Medical model predicted an unmapped class; '
-              'suppressing output until its FSL label is verified.',
-            );
-            _medCandidate = null;
-            _medCandidateCount = 0;
-            return;
-          }
-          final displayWord = _formatMedicalPhrase(rawWord);
-
-          if (displayWord == _medCandidate) {
-            _medCandidateCount++;
-          } else {
-            _medCandidate = displayWord;
-            _medCandidateCount = 1;
-          }
-
-          if (_medCandidateCount >= 4 && displayWord != _medEmittedLabel) {
-            final now = DateTime.now();
-            final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
-            final isSameWord = (displayWord == _lastEmittedLabel);
-            final requiredDelay = isSameWord ? 2200 : 900;
-
-            if (elapsed > requiredDelay) {
-              _lastEmittedLabel = displayWord;
-              _medEmittedLabel = displayWord;
-              _lastEmittedTime = now;
-              _predictionsController.add(
-                SignResult(
-                  label: displayWord,
-                  confidence: top1Prob,
-                  timestamp: now,
-                  source: 'fsl_medical_model',
-                ),
-              );
-            }
-          }
-        } else {
+      if (_passesPaperConfidenceGate(top1Prob, top2Prob)) {
+        final rawWord = _medicalLabels[top1Idx];
+        // Avoid displaying unresolved outputs if a future bundle still has
+        // placeholder names in its label map.
+        if (RegExp(r'^Medical_\d+$').hasMatch(rawWord)) {
           _medCandidate = null;
           _medCandidateCount = 0;
+          return;
         }
-      } catch (e) {
-        debugPrint(
-          '[TfliteRecognitionService] Medical ST-GCN inference error: $e',
-        );
+        final displayWord = _formatMedicalPhrase(rawWord);
+        if (displayWord == _medCandidate) {
+          _medCandidateCount++;
+        } else {
+          _medCandidate = displayWord;
+          _medCandidateCount = 1;
+        }
+
+        if (_medCandidateCount >= _phraseStableInferences) {
+          final predictionTime = DateTime.now();
+          _medicalGestureConsumed = true;
+          _predictionsController.add(
+            SignResult(
+              label: displayWord,
+              confidence: top1Prob,
+              timestamp: predictionTime,
+              source: 'fsl_medical_model',
+            ),
+          );
+        }
+      } else {
+        _medCandidate = null;
+        _medCandidateCount = 0;
       }
-    }
+    });
   }
 
   /// Formats raw medical signs to bilingual clinical & patient-friendly labels
@@ -1616,44 +1762,37 @@ class TfliteRecognitionService implements RecognitionService {
   }
 
   /// Linearly resamples buffer to exact 60-frame ST-GCN tensor input with true linear interpolation
-  List<List<List<double>>> _resampleSequence(
+  Uint8List _resampleSequence(
     List<List<List<double>>> sequence,
     int targetLength,
   ) {
     final n = sequence.length;
-    if (n == targetLength) return sequence;
-    if (n <= 1) {
-      return List.generate(
-        targetLength,
-        (_) => sequence.isEmpty
-            ? List.generate(_totalJoints, (_) => [0.0, 0.0, 0.0])
-            : sequence.first,
-      );
-    }
-    final resampled = <List<List<double>>>[];
+    final values = Float32List(targetLength * _totalJoints * 3);
+    if (n == 0) return Uint8List.view(values.buffer);
+
     for (int i = 0; i < targetLength; i++) {
-      final pos = i * (n - 1) / (targetLength - 1);
+      final pos = n <= 1 ? 0.0 : i * (n - 1) / (targetLength - 1);
       final lower = pos.floor();
       final upper = pos.ceil();
       final alpha = pos - lower;
-      final frame = List.generate(_totalJoints, (j) {
+      for (var j = 0; j < _totalJoints; j++) {
         final p0 = sequence[lower][j];
         final p1 = sequence[upper][j];
-        return [
-          (1.0 - alpha) * p0[0] + alpha * p1[0],
-          (1.0 - alpha) * p0[1] + alpha * p1[1],
-          (1.0 - alpha) * p0[2] + alpha * p1[2],
-        ];
-      });
-      resampled.add(frame);
+        final offset = (i * _totalJoints + j) * 3;
+        values[offset] = (1.0 - alpha) * p0[0] + alpha * p1[0];
+        values[offset + 1] = (1.0 - alpha) * p0[1] + alpha * p1[1];
+        values[offset + 2] = (1.0 - alpha) * p0[2] + alpha * p1[2];
+      }
     }
-    return resampled;
+    return Uint8List.view(values.buffer);
   }
 
   @override
   void dispose() {
     _isRunning = false;
     _isInitialized = false;
+    _recognitionEpoch++;
+    _poseRequestGeneration++;
     _handSubscription?.cancel();
     _pendingHandFrame = null;
     if (_poseLandmarkerReady) {
@@ -1665,8 +1804,54 @@ class TfliteRecognitionService implements RecognitionService {
     _predictionsController.close();
     _pauseStatusController.close();
     _landmarkStreamController.close();
-    _alphabetInterpreter?.close();
-    _fslModelInterpreter?.close();
-    _medicalModelInterpreter?.close();
+    final models = [
+      _alphabetInterpreter,
+      _fslModelInterpreter,
+      _medicalModelInterpreter,
+    ];
+    _alphabetInterpreter = null;
+    _fslModelInterpreter = null;
+    _medicalModelInterpreter = null;
+    unawaited(_disposeModels(models));
   }
+
+  Future<void> _disposeModels(List<_ModelRunner?> models) async {
+    while (_modelInferenceInFlight) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    await Future.wait<void>(models.map(_closeModel));
+  }
+}
+
+class _ModelRunner {
+  _ModelRunner(this.interpreter, this.worker);
+
+  final Interpreter interpreter;
+  final IsolateInterpreter worker;
+
+  Future<void> run(Object input, Object output) => worker.run(input, output);
+}
+
+class _PoseFrame {
+  const _PoseFrame({
+    required this.yPlane,
+    required this.uPlane,
+    required this.vPlane,
+    required this.width,
+    required this.height,
+    required this.yRowStride,
+    required this.uvRowStride,
+    required this.uvPixelStride,
+    required this.rotation,
+  });
+
+  final Uint8List yPlane;
+  final Uint8List uPlane;
+  final Uint8List vPlane;
+  final int width;
+  final int height;
+  final int yRowStride;
+  final int uvRowStride;
+  final int uvPixelStride;
+  final int rotation;
 }

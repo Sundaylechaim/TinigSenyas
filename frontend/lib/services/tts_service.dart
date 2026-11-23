@@ -267,9 +267,8 @@ class TtsService {
       final statusCode = error.response?.statusCode;
       if (statusCode == null && _isLoopbackUrl(serverUrl)) {
         throw StateError(
-          r'Cannot reach the local Filipino speech service. Start the app '
-          r'and backend with powershell -ExecutionPolicy Bypass -File '
-          r'.\frontend\run_web.ps1 from the repository root.',
+          'Cannot reach the local Filipino speech service. Check that the '
+          'backend is running and the configured address is reachable.',
         );
       }
       throw StateError(
