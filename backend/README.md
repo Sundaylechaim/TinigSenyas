@@ -47,8 +47,10 @@ Once the backend is running, open your browser to view the interactive documenta
 ## Configuration (Environment Variables)
 
 All deployment settings are read from the environment; a local `.env` file next to
-`server.py` is loaded automatically by `python-dotenv`. Nothing here is required to boot
-the API, but the defaults are for single-machine development only.
+`server.py` is loaded automatically by `python-dotenv`. Copy `backend/.env.example` to
+`backend/.env` for local development, then replace its placeholders. Keep `.env` files
+and real credentials out of GitHub. The API can start with defaults, but remote TTS and
+administrative routes need their tokens configured to work.
 
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |
@@ -65,7 +67,8 @@ the API, but the defaults are for single-machine development only.
 | `OTA_MIN_APP_BUILD` | `2019` | Minimum build number for the v1.0.0 app contract. |
 | `FSL_MODEL_DIR` | `../frontend/assets/model` | Directory containing the canonical phrase, alphabet, and medical TFLite models and matching UTF-8 labels. |
 | `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | *(unset)* | Enables the Azure Cognitive Services fallback; without both, Edge-TTS is used. |
-| `APP_BASE_URL` / `PHYSICAL_POSTAL_ADDRESS` | `https://tinigsenyas.org` | CAN-SPAM footer values in `email_service.py`. |
+| `APP_BASE_URL` | `https://tinigsenyas.org` | Application URL used in email footers. |
+| `COMPANY_PHYSICAL_POSTAL_ADDRESS` | Built-in organization address | Physical mailing address used in email footers; override it with the verified address before enabling email. |
 
 ### Publish a vocabulary snapshot
 

@@ -41,7 +41,7 @@ class TfliteRecognitionService implements RecognitionService {
   static const int _medicalClassCount = 35;
   static const int _alphabetClassCount = 28;
 
-  RecognitionMode _mode = RecognitionMode.auto;
+  RecognitionMode _mode = RecognitionMode.phrases;
   @override
   RecognitionMode get mode => _mode;
   @override
@@ -65,6 +65,7 @@ class TfliteRecognitionService implements RecognitionService {
     _sequenceBuffer.clear();
     _lastGestureMotionAt = null;
     _motionRouteActive = false;
+    _lastPhraseInferenceAt = null;
   }
 
   Offset? _lastWrist;
@@ -86,6 +87,9 @@ class TfliteRecognitionService implements RecognitionService {
   final List<List<double>> _medProbHistory = [];
   static const int _alphaProbHistorySize = 5;
   static const int _probHistorySize = 5;
+  static const int _phraseProbHistorySize = 3;
+  static const int _phraseStableFrames = 3;
+  static const Duration _phraseInferenceInterval = Duration(milliseconds: 100);
   static const double _paperMinimumConfidence = 0.60;
   static const double _paperMinimumMargin = 0.12;
   static const double _paperHighConfidence = 0.75;
@@ -127,6 +131,7 @@ class TfliteRecognitionService implements RecognitionService {
   int _restZoneFrameCount = 0;
   static const int _restZoneThreshold = 15; // ~500ms of sustained hands at rest
   DateTime? _lastGestureMotionAt;
+  DateTime? _lastPhraseInferenceAt;
 
   bool _passesPaperConfidenceGate(double top1, double top2) =>
       top1 >= _paperHighConfidence ||
@@ -709,7 +714,7 @@ class TfliteRecognitionService implements RecognitionService {
     return ordered;
   }
 
-  void _clearTemporalTrackingData() {
+  void _clearTemporalTrackingData({bool preserveAlphabetEmission = false}) {
     _sequenceBuffer.clear();
     _poseNormalizationCenter = (0.5, 0.5, 0.0);
     _poseNormalizationScale = 0.20;
@@ -724,7 +729,7 @@ class TfliteRecognitionService implements RecognitionService {
     _motionRouteActive = false;
     _alphaCandidate = null;
     _alphaCandidateCount = 0;
-    _alphaEmittedLabel = null;
+    if (!preserveAlphabetEmission) _alphaEmittedLabel = null;
     _alphaReleaseFrameCount = 0;
     _fslCandidate = null;
     _fslCandidateCount = 0;
@@ -734,6 +739,7 @@ class TfliteRecognitionService implements RecognitionService {
     _medCandidateCount = 0;
     _medEmittedLabel = null;
     _lastGestureMotionAt = null;
+    _lastPhraseInferenceAt = null;
     _jTrajectory.clear();
   }
 
@@ -755,7 +761,7 @@ class TfliteRecognitionService implements RecognitionService {
         now.difference(_lastWristTimestamp!) >
             const Duration(milliseconds: 250)) {
       // Avoid blending a reacquired hand into a stale position or sequence.
-      _clearTemporalTrackingData();
+      _clearTemporalTrackingData(preserveAlphabetEmission: true);
       _lastTrackedHandCount = 0;
       _missingHandFrames = 0;
       _restZoneFrameCount = 0;
@@ -773,7 +779,7 @@ class TfliteRecognitionService implements RecognitionService {
       _missingHandFrames++;
       if (_missingHandFrames == _trackingGraceFrames + 1) {
         _landmarkStreamController.add([]);
-        _clearTemporalTrackingData();
+        _clearTemporalTrackingData(preserveAlphabetEmission: true);
         _lastTrackedHandCount = 0;
       }
       if (_missingHandFrames > _trackingGraceFrames) {
@@ -781,6 +787,8 @@ class TfliteRecognitionService implements RecognitionService {
         if (_restZoneFrameCount >= _restZoneThreshold && !_manualPaused) {
           if (!_isPaused) {
             _isPaused = true;
+            _alphaEmittedLabel = null;
+            _alphaReleaseFrameCount = 0;
             _pauseStatusController.add(true);
           }
         }
@@ -1335,6 +1343,13 @@ class TfliteRecognitionService implements RecognitionService {
     // Keep evaluating through the deliberate end hold so the classifier sees
     // the completed sign and can settle before the signer lowers their hands.
     if (_sequenceBuffer.length >= 24 && _hasRecentGestureActivity) {
+      final now = DateTime.now();
+      if (_lastPhraseInferenceAt != null &&
+          now.difference(_lastPhraseInferenceAt!) < _phraseInferenceInterval) {
+        return;
+      }
+      _lastPhraseInferenceAt = now;
+
       try {
         final seqInput = _resampleSequence(
           _sequenceBuffer,
@@ -1348,7 +1363,7 @@ class TfliteRecognitionService implements RecognitionService {
 
         // Rolling probability distribution smoothing (eliminates single-frame noise)
         _fslProbHistory.add(rawProbs);
-        if (_fslProbHistory.length > _probHistorySize) {
+        if (_fslProbHistory.length > _phraseProbHistorySize) {
           _fslProbHistory.removeAt(0);
         }
 
@@ -1388,8 +1403,8 @@ class TfliteRecognitionService implements RecognitionService {
           // Commit only after the same phrase remains the leading class for
           // several evaluations, preventing transition frames from flashing
           // different words into the transcript.
-          if (_fslCandidateCount >= 4 && displayWord != _fslEmittedLabel) {
-            final now = DateTime.now();
+          if (_fslCandidateCount >= _phraseStableFrames &&
+              displayWord != _fslEmittedLabel) {
             final elapsed = now.difference(_lastEmittedTime).inMilliseconds;
             final requiredDelay = 700;
 

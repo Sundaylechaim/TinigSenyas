@@ -53,6 +53,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   bool _useBackendFeed = kIsWeb;
   bool _backendFeedError = false;
   bool _isPaused = false;
+  bool _isManuallyPaused = false;
   RecognitionProvider? _recognitionProvider;
   StreamSubscription<SignResult>? _predictionSubscription;
   StreamSubscription<bool>? _pauseSubscription;
@@ -64,7 +65,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   Set<String> _availableAnimationSlugs = const {};
   Timer? _gestureReplayTimer;
   bool _isCheckingModelUpdate = false;
-  RecognitionMode _currentMode = RecognitionMode.auto;
+  RecognitionMode _currentMode = RecognitionMode.phrases;
 
   void _cycleRecognitionMode() {
     setState(() {
@@ -82,6 +83,13 @@ class _SignToTextScreenState extends State<SignToTextScreen>
           _currentMode = RecognitionMode.auto;
           break;
       }
+      // Do not carry repeated or partial alphabet output into a different
+      // recognition mode. Keep already-composed messages intact.
+      _activeWordBuffer = '';
+      _suggestedWords = [];
+      _currentPrediction = null;
+      _lastRecognizedSign = null;
+      _gestureReplayFrames = const [];
     });
     _recognitionProvider?.setMode(_currentMode);
     final modeLabel = _currentMode == RecognitionMode.phrases
@@ -142,6 +150,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
         }
         setState(() {
           _isPaused = paused;
+          if (!paused) _isManuallyPaused = false;
           if (paused) {
             _snapshotGestureReplay();
             _currentPrediction = null;
@@ -858,6 +867,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     final newPaused = !_isPaused;
     setState(() {
       _isPaused = newPaused;
+      _isManuallyPaused = newPaused;
     });
     _recognitionProvider?.setPaused(newPaused);
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -1887,6 +1897,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final isPaused = _isPaused;
+    final isWaitingForHands = isPaused && !_isManuallyPaused;
     final hasPrediction = _currentPrediction != null && !isPaused;
     final isReady =
         _isModelReady || (_recognitionProvider?.isModelReady ?? false);
@@ -1913,14 +1924,16 @@ class _SignToTextScreenState extends State<SignToTextScreen>
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: isDark
                 ? const Color(0xFF0C1220).withValues(alpha: 0.90)
                 : Colors.white.withValues(alpha: 0.95),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: isPaused
+              color: isWaitingForHands
+                  ? const Color(0xFF0D9488).withValues(alpha: 0.45)
+                  : isPaused
                   ? _kAppYellow.withValues(alpha: 0.5)
                   : isUncertainPrediction
                   ? const Color(0xFFD97706).withValues(alpha: 0.45)
@@ -1945,7 +1958,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                   Container(
                     padding: const EdgeInsets.all(7),
                     decoration: BoxDecoration(
-                      color: isPaused
+                      color: isWaitingForHands
+                          ? const Color(0xFF0D9488).withValues(alpha: 0.16)
+                          : isPaused
                           ? const Color(0xFFD97706).withValues(alpha: 0.18)
                           : isUncertainPrediction
                           ? const Color(0xFFD97706).withValues(alpha: 0.16)
@@ -1955,14 +1970,18 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
-                      isPaused
+                      isWaitingForHands
+                          ? Icons.front_hand_rounded
+                          : isPaused
                           ? Icons.pause_circle_filled_rounded
                           : hasPrediction
                           ? (isUncertainPrediction
                                 ? Icons.help_outline_rounded
                                 : Icons.sign_language_rounded)
                           : Icons.radar_rounded,
-                      color: isPaused
+                      color: isWaitingForHands
+                          ? const Color(0xFF0D9488)
+                          : isPaused
                           ? const Color(0xFFD97706)
                           : hasPrediction
                           ? (isUncertainPrediction
@@ -1976,7 +1995,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                   Expanded(
                     child: Semantics(
                       liveRegion: true,
-                      label: isPaused
+                      label: isWaitingForHands
+                          ? 'Show your signing hands in the camera frame. Recognition resumes automatically.'
+                          : isPaused
                           ? 'Sign recognition paused. Tap resume to continue.'
                           : hasPrediction
                           ? '${isUncertainPrediction ? 'Possible sign' : 'Sign detected'}: ${_currentPrediction!.label}. Model score ${(confidence * 100).toInt()} percent. Check the result before sharing.'
@@ -1988,7 +2009,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            isPaused
+                            isWaitingForHands
+                                ? 'Show your signing hands'
+                                : isPaused
                                 ? 'Recognition paused'
                                 : hasPrediction
                                 ? (isUncertainPrediction
@@ -2019,7 +2042,37 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (isPaused)
+                      if (isWaitingForHands)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0D9488),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.front_hand_rounded,
+                                size: 14,
+                                color: Colors.white,
+                              ),
+                              SizedBox(width: 4),
+                              Text(
+                                'WAITING',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 10,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else if (isPaused)
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 10,
@@ -2092,25 +2145,26 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                           ),
                         ),
                       const SizedBox(width: 6),
-                      IconButton(
-                        icon: Icon(
-                          isPaused
-                              ? Icons.play_circle_fill_rounded
-                              : Icons.pause_circle_outline_rounded,
-                          color: isPaused
-                              ? const Color(0xFF10B981)
-                              : (isDark
-                                    ? Colors.white70
-                                    : const Color(0xFF64748B)),
-                          size: 24,
+                      if (!isWaitingForHands)
+                        IconButton(
+                          icon: Icon(
+                            isPaused
+                                ? Icons.play_circle_fill_rounded
+                                : Icons.pause_circle_outline_rounded,
+                            color: isPaused
+                                ? const Color(0xFF10B981)
+                                : (isDark
+                                      ? Colors.white70
+                                      : const Color(0xFF64748B)),
+                            size: 24,
+                          ),
+                          tooltip: isPaused
+                              ? 'Resume recognition'
+                              : 'Pause recognition',
+                          constraints: const BoxConstraints(),
+                          padding: EdgeInsets.zero,
+                          onPressed: _toggleManualPause,
                         ),
-                        tooltip: isPaused
-                            ? 'Resume recognition'
-                            : 'Pause recognition',
-                        constraints: const BoxConstraints(),
-                        padding: EdgeInsets.zero,
-                        onPressed: _toggleManualPause,
-                      ),
                     ],
                   ),
                 ],
@@ -2119,7 +2173,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                   _composedSentence.isNotEmpty ||
                   _suggestedWords.isNotEmpty)
                 _buildFingerspellingWordAssembler(),
-              const SizedBox(height: 8),
+              const SizedBox(height: 5),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -2167,7 +2221,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                     ),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -2312,13 +2366,14 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     final isReady =
         _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final isPaused = _isPaused;
+    final isWaitingForHands = isPaused && !_isManuallyPaused;
     final isTracking = _liveLandmarks.isNotEmpty && !isPaused;
     final hasPrediction = _currentPrediction != null && !isPaused;
     final isUncertainPrediction =
         hasPrediction && _currentPrediction!.confidence < 0.60;
     final framingHint = _currentMode == RecognitionMode.alphabet
         ? 'Keep your signing hand centered and fully visible.'
-        : 'Keep your face, upper body, and hands inside the guide.';
+        : 'Place the phone at eye level and step back until your head, chest, and both hands fit in the guide.';
     final signingHint = switch (_currentMode) {
       RecognitionMode.phrases =>
         'Sign one phrase clearly, then lower your hands briefly.',
@@ -2340,9 +2395,14 @@ class _SignToTextScreenState extends State<SignToTextScreen>
       hint = 'Check the camera and lighting, then try again.';
       icon = Icons.error_outline_rounded;
       iconColor = Colors.white;
+    } else if (isWaitingForHands) {
+      message = 'Show your signing hands';
+      hint = 'Step back; keep your upper body and signing hands in the guide.';
+      icon = Icons.front_hand_rounded;
+      iconColor = Colors.white;
     } else if (isPaused) {
       message = 'Recognition paused';
-      hint = 'Tap the play button below to resume.';
+      hint = 'Tap the play button to resume.';
       icon = Icons.pause_circle_rounded;
       iconColor = Colors.white;
     } else if (isUncertainPrediction) {
@@ -2381,6 +2441,8 @@ class _SignToTextScreenState extends State<SignToTextScreen>
           decoration: BoxDecoration(
             color: _recognitionError != null
                 ? Colors.redAccent.withValues(alpha: 0.85)
+                : isWaitingForHands
+                ? const Color(0xFF0D9488).withValues(alpha: 0.92)
                 : isPaused
                 ? const Color(0xFFD97706).withValues(alpha: 0.90)
                 : isUncertainPrediction
@@ -2392,7 +2454,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                       : Colors.white.withValues(alpha: 0.85)),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: isPaused
+              color: isWaitingForHands
+                  ? const Color(0xFF0D9488).withValues(alpha: 0.6)
+                  : isPaused
                   ? _kAppYellow.withValues(alpha: 0.6)
                   : isUncertainPrediction
                   ? const Color(0xFFD97706).withValues(alpha: 0.55)
@@ -2463,7 +2527,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                   ),
                 ],
               ),
-              if (_recognitionError == null && !isPaused) ...[
+              if (_recognitionError == null) ...[
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -2623,8 +2687,8 @@ class _ActionButton extends StatelessWidget {
               child: Tooltip(
                 message: tooltip ?? label,
                 child: Container(
-                  width: 44,
-                  height: 44,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
@@ -2632,7 +2696,7 @@ class _ActionButton extends StatelessWidget {
                       width: 1.5,
                     ),
                   ),
-                  child: Center(child: Icon(icon, color: color, size: 22)),
+                  child: Center(child: Icon(icon, color: color, size: 20)),
                 ),
               ),
             ),

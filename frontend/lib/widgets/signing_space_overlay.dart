@@ -44,16 +44,16 @@ class _SigningGuidePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final frame = showUpperBodyGuide
         ? Rect.fromLTRB(
-            size.width * 0.17,
-            size.height * 0.24,
-            size.width * 0.83,
-            size.height * 0.76,
+            size.width * 0.08,
+            size.height * 0.10,
+            size.width * 0.92,
+            size.height * 0.82,
           )
         : Rect.fromLTRB(
             size.width * 0.12,
-            size.height * 0.30,
+            size.height * 0.18,
             size.width * 0.88,
-            size.height * 0.70,
+            size.height * 0.78,
           );
     final framePaint = Paint()
       ..color = boundaryColor.withValues(alpha: 0.72)
