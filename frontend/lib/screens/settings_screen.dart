@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../config/app_version.dart';
 import '../providers/recognition_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
@@ -55,6 +56,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
+    final ttsService = context.read<TtsService>();
     _textScale = _settingsService.textScaleFactor;
     _ttsRate = _settingsService.ttsRate;
     _ttsLanguage = _settingsService.ttsLanguage;
@@ -63,9 +65,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _ttsOfflineEnglishVoice = _settingsService.ttsOfflineEnglishVoice;
     _ttsServerUrl = _settingsService.ttsServerUrl;
     _modelVersion = _settingsService.modelVersion;
+    try {
+      // The updater reads the installed version or bundled version.txt. Keep
+      // this card in sync with the version shown in the OTA dialog instead of
+      // relying on SettingsService's legacy fallback value.
+      final installedModelVersion = await ModelUpdater().getInstalledVersion();
+      if (installedModelVersion.isNotEmpty) {
+        _modelVersion = installedModelVersion;
+        await _settingsService.setModelVersion(installedModelVersion);
+      }
+    } catch (_) {
+      // Model status should not prevent the remaining settings from loading.
+    }
 
     try {
-      final ttsService = context.read<TtsService>();
       _ttsVoices = await ttsService.getAvailableVoices();
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
         _offlineEnglishVoiceInstalled = await ttsService
@@ -1464,7 +1477,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showAboutDialog(
       context: context,
       applicationName: 'TinigSenyas',
-      applicationVersion: '1.0.0',
+      applicationVersion: AppVersion.name,
       applicationLegalese:
           'Filipino Sign Language e-Learning & Translation System',
     );

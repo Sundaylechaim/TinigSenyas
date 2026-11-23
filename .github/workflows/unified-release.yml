@@ -75,6 +75,8 @@ jobs:
     name: Build Android APK
     needs: [test-frontend, test-backend]
     runs-on: ubuntu-latest
+    env:
+      SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -115,11 +117,12 @@ jobs:
               "ANDROID_RELEASE_STORE_PASSWORD",
               "ANDROID_RELEASE_KEY_ALIAS",
               "ANDROID_RELEASE_KEY_PASSWORD",
+              "SHOREBIRD_TOKEN",
           )
           missing = [name for name in names if not os.environ.get(name)]
           if missing:
               raise SystemExit(
-                  "Missing Android release signing secrets: " + ", ".join(missing)
+                  "Missing Android signing or Shorebird secrets: " + ", ".join(missing)
               )
 
           keystore = base64.b64decode(
@@ -170,17 +173,23 @@ jobs:
           key_properties.chmod(0o600)
           PY
 
-      # The published APK targets the ARM64 phones used for field testing.
-      - name: Build signed ARM64 release APK
+      - name: Set up Shorebird
+        uses: shorebirdtech/setup-shorebird@v1
+        with:
+          cache: true
+
+      # Publish a Shorebird baseline so future Dart-only updates can reach
+      # this exact signed app release through the Shorebird patch workflow.
+      - name: Build Shorebird-enabled signed ARM64 release APK
         working-directory: frontend
-        run: flutter build apk --release --split-per-abi --target-platform=android-arm64
+        run: shorebird release android --artifact apk --target-platform=android-arm64 --flutter-version=3.47.9 --release-version=1.0.0+2019
 
       - name: Verify release APK signature and certificate
         env:
           EXPECTED_SIGNER_SHA256: bb4cdeacb147b3d7e6395bf7aa59c56a5e631da1be03cd52125f0edd3a3d6e70
         run: |
           set -euo pipefail
-          apk="frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
+          apk="frontend/build/app/outputs/flutter-apk/app-release.apk"
           sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           test -n "$sdk_root"
           apksigner="$(find "$sdk_root/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
@@ -192,7 +201,7 @@ jobs:
       - name: Prepare Android Binaries
         run: |
           mkdir -p dist
-          cp frontend/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/TinigSenyas-Android.apk
+          cp frontend/build/app/outputs/flutter-apk/app-release.apk dist/TinigSenyas-Android.apk
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
@@ -300,8 +309,49 @@ jobs:
           name: ios-dist
           path: release_assets
 
-      - name: Add OTA model asset
-        run: cp frontend/assets/model/fsl_model.tflite release_assets/fsl_model.tflite
+      - name: Add complete OTA model bundle
+        run: |
+          set -euo pipefail
+          model_dir=frontend/assets/model
+          for asset in \
+            fsl_model.tflite \
+            fsl_alphabet.tflite \
+            fsl_medical.tflite \
+            labels.txt \
+            medical_labels.txt \
+            alphabet_labels.txt \
+            manifest.json \
+            version.txt; do
+            test -s "$model_dir/$asset"
+            cp "$model_dir/$asset" "release_assets/$asset"
+          done
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          manifest_path = Path("release_assets/manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          required = {
+              "fsl_model.tflite",
+              "fsl_alphabet.tflite",
+              "fsl_medical.tflite",
+              "labels.txt",
+              "medical_labels.txt",
+              "alphabet_labels.txt",
+          }
+          entries = manifest.get("models", [])
+          assets = {entry.get("name") for entry in entries if isinstance(entry, dict)}
+          if assets != required:
+              raise SystemExit(f"Manifest file set mismatch: {sorted(assets)}")
+          for entry in entries:
+              asset = Path("release_assets") / entry["name"]
+              digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+              if digest != entry.get("sha256", "").lower():
+                  raise SystemExit(f"Manifest SHA-256 mismatch: {asset.name}")
+          if manifest.get("version") != Path("release_assets/version.txt").read_text().strip():
+              raise SystemExit("Model version.txt does not match manifest version")
+          PY
 
       - name: Generate Release Body
         run: |
@@ -312,8 +362,9 @@ jobs:
 
           ---
 
-          ### FSL phrase model
-          - Model OTA **1.2.2** is included and can be installed from the app's Settings screen.
+          ### FSL recognition models
+          - App release baseline: **1.0.0+2019**. Recognition model bundle **1.3.0** is a separately versioned six-file set with checksums and an app-build compatibility floor.
+          - Install this Shorebird-enabled APK baseline once. Future Dart-only changes can arrive as Shorebird patches; model weights use the in-app model updater.
           - The connected ST-GCN candidate showed a modest gain on an internal sample-level split; signer-independent Deaf-user validation is still needed.
 
           ---
@@ -350,6 +401,13 @@ jobs:
             release_assets/TinigSenyas-Android.apk
             release_assets/TinigSenyas-iOS.ipa
             release_assets/fsl_model.tflite
+            release_assets/fsl_alphabet.tflite
+            release_assets/fsl_medical.tflite
+            release_assets/labels.txt
+            release_assets/medical_labels.txt
+            release_assets/alphabet_labels.txt
+            release_assets/manifest.json
+            release_assets/version.txt
           fail_on_unmatched_files: true
 
       - name: Upload Unified Package (on workflow_dispatch)

@@ -3,8 +3,9 @@ import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'package:path/path.dart';
 import '../models/conversation.dart';
+import '../models/fsl_vocabulary_item.dart';
 
-class DatabaseHelper {
+class DatabaseHelper implements FslVocabularyStore {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
   final ValueNotifier<int> historyChangeNotifier = ValueNotifier<int>(0);
@@ -28,7 +29,12 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return openDatabase(
+      path,
+      version: 2,
+      onCreate: _createDB,
+      onUpgrade: _upgradeDB,
+    );
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -49,6 +55,48 @@ class DatabaseHelper {
     await db.execute(
       'CREATE INDEX idx_conversations_is_synced ON conversations(is_synced)',
     );
+    await _createVocabularyTable(db);
+  }
+
+  Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) await _createVocabularyTable(db);
+  }
+
+  Future<void> _createVocabularyTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE vocabulary (
+        fsl_id INTEGER PRIMARY KEY,
+        word TEXT NOT NULL,
+        meaning TEXT NOT NULL,
+        gesture_label TEXT NOT NULL,
+        video_path TEXT,
+        created_at TEXT
+      )
+    ''');
+  }
+
+  @override
+  Future<void> replaceVocabulary(List<FslVocabularyItem> entries) async {
+    if (entries.isEmpty) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('vocabulary');
+      final batch = txn.batch();
+      for (final entry in entries) {
+        batch.insert('vocabulary', entry.toDatabaseMap());
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  @override
+  Future<List<String>> getVocabularyWords() async {
+    final db = await database;
+    final rows = await db.query('vocabulary', columns: ['word']);
+    return rows
+        .map((row) => row['word'] as String)
+        .where((word) => word.trim().isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<int> saveConversation(Conversation conversation) async {
@@ -100,7 +148,11 @@ class DatabaseHelper {
 
   Future<int> deleteConversation(int id) async {
     final db = await database;
-    final count = await db.delete('conversations', where: 'id = ?', whereArgs: [id]);
+    final count = await db.delete(
+      'conversations',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
     _notifyHistoryChanged();
     return count;
   }

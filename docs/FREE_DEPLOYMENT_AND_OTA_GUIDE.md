@@ -16,43 +16,34 @@
 
 ## 1. Android Free Distribution (Google Drive)
 
-Android allows direct installation of APKs ("sideloading") without any store fees.
+Android allows direct APK installation without store fees. The official release
+contains **one signed ARM64 APK** named `TinigSenyas-Android.apk` on the GitHub
+release page. It uses app version `1.0.0`, build `2019`, and includes the
+Shorebird runtime required for future Dart-code patches.
 
-### Step 1: Build the Release APK
-Open PowerShell in `TinigSenyas/frontend` and run:
+The CI release builds and verifies this APK when a version tag is published.
+For a local Shorebird release, open PowerShell in `TinigSenyas/frontend` and run:
 
 ```powershell
-# Option A: Universal APK (runs on all Android phones, but bundles 4 ABIs)
-flutter build apk --release
-
-# Option B: Optimized Split APKs (RECOMMENDED)
-flutter build apk --split-per-abi
+.\build_android_apk.ps1
 ```
 
-Measured from the current build (release mode, no R8 minification):
+This command publishes the Shorebird baseline for the version in `pubspec.yaml`
+and keeps one local APK at
+`frontend/build/app/outputs/flutter-apk/app-release.apk`. The Android release
+keystore and Shorebird CLI authentication must be configured first. Keep the
+same signing key for every binary release so Android can install updates over
+the existing app.
 
-| Build | Size |
-| :--- | :--- |
-| Universal `app-release.apk` | **198.4 MB** |
-| `app-arm64-v8a-release.apk` | **78.1 MB** |
-| `app-armeabi-v7a-release.apk` | **62.4 MB** |
-| `app-x86_64-release.apk` | 87.5 MB (emulators / Intel Chromebooks only) |
-
-Always distribute the per-ABI builds - the universal APK is more than twice the size
-because it carries `libonnxruntime`, MediaPipe, and LiteRT natives for every architecture.
-
-> **Pick one ABI per tester and stay on it.** Split builds are stamped with a different `versionCode` per architecture (arm64 2001, armv7 1001, x86_64 4001 for a pubspec `1.0.0+1`), because Android encodes the ABI in the version code. A phone that installed the arm64 build refuses the armv7 build as a downgrade, and the same applies to every future release: bump `version: x.y.z+N` in `pubspec.yaml` so each new upload is higher than the last, and tell testers which single file to use.
-
-When building split APKs, Flutter creates the files above in `frontend/build/app/outputs/flutter-apk/`:
-- `app-arm64-v8a-release.apk` *(Use this! Covers 90%+ of modern Android phones)*
-- `app-armeabi-v7a-release.apk` *(For older 32-bit Android phones)*
-- `app-x86_64-release.apk` *(For emulators / Intel Chromebooks)*
-
-> **Signing:** without `frontend/android/key.properties`, release builds are signed with Flutter's debug key. That is fine for tester sideloads, but every tester must uninstall the old build whenever you switch keys, and debug-signed APKs cannot go on Google Play or upgrade in place across releases. Create a keystore and add `key.properties` (already gitignored) for a stable release signature.
+The previous GitHub APK was built without Shorebird. Users on that build must
+install this v1.0.0+2019 baseline once; later Dart-only changes can arrive as
+Shorebird patches. Model updates remain separately available through the
+in-app OTA model updater.
 
 ### Step 2: Upload to Google Drive
 1. Create a dedicated folder in Google Drive (e.g., `TinigSenyas Releases`).
-2. Upload `app-release.apk` (or `app-arm64-v8a-release.apk`).
+2. Upload the single `TinigSenyas-Android.apk` from the GitHub release, or the
+   local `app-release.apk` if you built it yourself.
 3. Right-click the folder/file $\rightarrow$ **Share** $\rightarrow$ set access to **"Anyone with the link can view/download"**.
 
 ### Step 3: Instructions to Send to Members / Testers
@@ -108,69 +99,67 @@ TinigSenyas is architected to be **100% usable without internet**:
 
 ## 4. Over-The-Air (OTA) Updates Workflow
 
-Because the app is distributed via Google Drive rather than the Play Store, here is how you keep users updated:
+The app has two separate OTA paths:
 
-### Layer 1: AI Model & Gesture Vocabulary Updates (No Re-installation Required!)
-When you retrain the FSL recognition model or add new sign vocabulary:
-1. Host the new model file (`fsl_model.tflite` or `.onnx`) and `manifest.json` on a public link (GitHub Releases, raw GitHub, or Google Drive direct link).
-2. Format of `manifest.json`:
-   ```json
-   {
-     "version": "1.1.0",
-     "url": "https://your-public-storage.com/models/fsl_model_v1.1.0.tflite",
-     "sha256": "4b6fbc908d964b3389385212b27cdecf...",
-     "min_app_version": "1.0.0",
-     "notes": "Added 25 new emergency and healthcare FSL signs."
-   }
-   ```
-3. Inside the app, members go to **Settings** $\rightarrow$ **Model** $\rightarrow$ tap **"Check for Model Updates (OTA)"**.
-4. The app streams the download, verifies the SHA-256 checksum, saves it locally, and hot-swaps the model without restarting the app!
+### Layer 1: Model and vocabulary updates
 
-> **The `sha256` must be a real digest of the exact file at `url`.** The app refuses to install a model whose checksum does not match, so a placeholder value silently disables OTA for every tester. Regenerate it after every retrain:
-> ```powershell
-> # PowerShell
-> (Get-FileHash .\fsl_model.tflite -Algorithm SHA256).Hash.ToLower()
-> ```
-> Then publish the model as a GitHub Release asset named `fsl_model.tflite` and set the backend's `OTA_MODEL_URL`, `OTA_MODEL_SHA256`, and `OTA_MODEL_VERSION` (see `backend/README.md`). `frontend/assets/model/manifest.json` - the fallback used when no server URL is configured - must carry the same values.
-> An update is only offered when `version` is strictly greater than the version already stored on the device, so bumping the model file without bumping `version` does nothing.
+The current model bundle is `1.3.0` and contains three TFLite models plus three
+matching UTF-8 label files. The API and bundled fallback manifest list SHA-256
+checksums for every file. Before publishing a retrained bundle:
 
-### Layer 2: App Code Updates (Version 2.0 APK)
-When you add new UI screens or major features:
-1. Bump `version: 1.0.1+2` in `frontend/pubspec.yaml`.
-2. Build the new release APKs:
-   ```powershell
-   flutter build apk --release --split-per-abi
-   ```
-3. Upload `app-arm64-v8a-release.apk` (and `app-armeabi-v7a-release.apk` for older phones) to the same Google Drive folder.
-4. Tell users to download and tap install.
-5. **Data Safety**: Android automatically installs the update over the existing app. **All translation history, user preferences, and local models are preserved safely in SQLite**.
+1. Update all model and label files under `frontend/assets/model/`.
+2. Regenerate `manifest.json` hashes from the exact files and increase the model
+   version in both `manifest.json` and `version.txt`.
+3. Run the backend tests. They compare API checksums with both the local
+   manifest and the actual file bytes.
+4. Push the verified files to `main` and deploy the backend that serves
+   `/api/v1/ota/manifest`.
+5. In the app, open **Settings → Check for Model Updates (OTA)**.
+
+The current app baseline checks `min_app_build=2019`. Older app builds may not
+accept this bundle; users should install the v1.0.0+2019 APK before testing this
+model set. Vocabulary sync is optional and keeps a last-known SQLite cache when
+the backend is unavailable.
+
+### Layer 2: Dart app-code updates
+
+The v1.0.0+2019 Android release is a Shorebird baseline. After users install it,
+Dart-only code changes can be published using the **Shorebird OTA Patch** GitHub
+workflow on the `stable` track, targeting release `1.0.0+2019`. The workflow
+requires `SHOREBIRD_TOKEN` and the Android release-signing secrets.
+
+The previous v1.2.15 APK was built with plain Flutter and cannot receive
+Shorebird patches. Install the new baseline APK once to enable code patches.
+Native plugin/configuration changes and changes to bundled sign-animation
+assets require a new APK; model weights and labels continue to use Layer 1.
+Increase the app build number for every new binary release and preserve the
+release signing key so Android can upgrade in place.
 
 ---
 
 ## 5. Quick Build Scripts
 
-A helper script has been placed in `frontend/build_android_apk.ps1`.  
-Whenever you want to build a local Android release, simply right-click it and select **Run with PowerShell** (or run `.\build_android_apk.ps1` from `frontend`). It will compile the release APK and locate the file.
+`frontend/build_android_apk.ps1` runs a Shorebird release for the version in
+`pubspec.yaml` and leaves one signed ARM64 APK at
+`frontend/build/app/outputs/flutter-apk/app-release.apk`. It requires an
+authenticated Shorebird CLI and the configured Android release keystore.
 
 ---
 
 ## 6. Unified Cloud CI/CD Release (Android + iOS Together)
 
-Instead of building manually from scratch every time, the project includes a dedicated build script (`frontend/build_android_apk.ps1`).
+Pushing a new version tag (for example, `v1.0.0+2019`) starts the GitHub
+release workflow. It runs Flutter analysis/tests and backend tests before
+building. Android output is one Shorebird-enabled, signed ARM64 APK named
+`TinigSenyas-Android.apk`; the six-file recognition bundle and checksummed
+manifest are attached to the same release. The workflow also prepares an
+unsigned iOS IPA for sideloading.
 
-### How to Build the Release APK:
-Run from `frontend`:
-```powershell
-.\build_android_apk.ps1
-```
-
-This runs GitHub Actions runners in parallel:
-- **Test Gate**: `flutter analyze`, `flutter test`, and the backend `unittest` suite must pass before any artifact is built.
-- **Android Runner**: Compiles `TinigSenyas-Android-arm64.apk` and `TinigSenyas-Android-armv7.apk` (per-ABI, so each stays well under the universal build's size).
-- **macOS Runner (unmac)**: Compiles `TinigSenyas-iOS.ipa` and `TinigSenyas-iOS-Simulator.zip`.
-- **Unified Release Publisher**: Combines both platforms into a single GitHub Release.
-
-> The CI-built APK is signed with Flutter's **debug key** until you add a real keystore. To produce a Play-ready or upgrade-stable build, create `frontend/android/key.properties` (gitignored) pointing at a `.jks` keystore - `app/build.gradle.kts` picks it up automatically and falls back to debug when it is absent.
+GitHub Actions needs the repository secrets `SHOREBIRD_TOKEN`,
+`ANDROID_RELEASE_KEYSTORE_BASE64`, `ANDROID_RELEASE_STORE_PASSWORD`,
+`ANDROID_RELEASE_KEY_ALIAS`, and `ANDROID_RELEASE_KEY_PASSWORD`. The workflow
+checks the APK signature against the project's release certificate before
+publishing the release.
 
 ### Unified Download Page:
 A device-detecting download portal is available at `docs/index.html`. When opened on any smartphone:

@@ -35,6 +35,8 @@ class BackendRecognitionService implements RecognitionService {
   Timer? _pollingTimer;
   bool _isInitialized = false;
   bool _isRunning = false;
+  bool _isPollingPrediction = false;
+  int _recognitionRunId = 0;
   bool _isPaused = false;
   RecognitionMode _mode = RecognitionMode.auto;
 
@@ -105,13 +107,21 @@ class BackendRecognitionService implements RecognitionService {
   @override
   Future<void> start() async {
     if (_isRunning) return;
+    final runId = ++_recognitionRunId;
     _isRunning = true;
     _pollingTimer?.cancel();
     _pollingTimer = Timer.periodic(const Duration(milliseconds: 150), (
       _,
-    ) async {
-      if (!_isRunning) return;
-      await _pollLivePrediction();
+    ) {
+      if (!_isRunning || runId != _recognitionRunId || _isPollingPrediction) {
+        return;
+      }
+      _isPollingPrediction = true;
+      unawaited(
+        _pollLivePrediction(runId).whenComplete(() {
+          _isPollingPrediction = false;
+        }),
+      );
     });
   }
 
@@ -159,9 +169,10 @@ class BackendRecognitionService implements RecognitionService {
     }
   }
 
-  Future<void> _pollLivePrediction() async {
+  Future<void> _pollLivePrediction(int runId) async {
     try {
       final res = await _dio.get('$baseUrl/api/v1/predict/live');
+      if (!_isRunning || runId != _recognitionRunId) return;
       if (res.statusCode == 200 && res.data is Map) {
         final data = res.data as Map<String, dynamic>;
         final isPaused = data['is_paused'] as bool? ?? false;
@@ -224,6 +235,7 @@ class BackendRecognitionService implements RecognitionService {
   @override
   Future<void> stop() async {
     _isRunning = false;
+    _recognitionRunId++;
     _pollingTimer?.cancel();
     _pollingTimer = null;
   }

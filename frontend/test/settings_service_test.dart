@@ -93,6 +93,15 @@ void main() {
       expect(await settings.getTtsServerToken(), 'test-access-token');
     });
 
+    test(
+      'allows the Android emulator loopback host for local backend use',
+      () async {
+        await settings.setTtsServer(url: 'http://10.0.2.2:5000', token: '');
+
+        expect(settings.ttsServerUrl, 'http://10.0.2.2:5000');
+      },
+    );
+
     test('does not require an online server for non-web defaults', () {
       expect(settings.ttsServerUrl, isEmpty);
     });
@@ -133,12 +142,15 @@ void main() {
       );
     });
 
-    test('defaults keepScreenAwake to true and persists user preference', () async {
-      expect(settings.keepScreenAwake, isTrue);
-      await settings.setKeepScreenAwake(false);
-      expect(settings.keepScreenAwake, isFalse);
-      await settings.setKeepScreenAwake(true);
-      expect(settings.keepScreenAwake, isTrue);
-    });
+    test(
+      'defaults keepScreenAwake to true and persists user preference',
+      () async {
+        expect(settings.keepScreenAwake, isTrue);
+        await settings.setKeepScreenAwake(false);
+        expect(settings.keepScreenAwake, isFalse);
+        await settings.setKeepScreenAwake(true);
+        expect(settings.keepScreenAwake, isTrue);
+      },
+    );
   });
 }

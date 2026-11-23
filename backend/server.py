@@ -116,6 +116,7 @@ class ModelManifest(BaseModel):
     url: str
     sha256: str
     min_app_version: str
+    min_app_build: int
     notes: str
     models: Optional[List[ModelFileItem]] = None
 
@@ -131,32 +132,63 @@ _DEFAULT_VOCABULARY: List[FSLVocabularyItem] = [
     FSLVocabularyItem(fsl_id=8, word="Pakiusap", meaning="Magalang na kahilingan (Please)", gesture_label="pakiusap"),
 ]
 
-# OTA defaults describe the models hosted directly in the official repository.
+# OTA defaults describe the complete model and label set hosted in the repository.
+_OTA_ASSET_BASE_URL = os.environ.get(
+    "OTA_ASSET_BASE_URL",
+    "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model",
+).rstrip("/")
 _OTA_MODEL_URL = os.environ.get(
     "OTA_MODEL_URL",
-    "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
+    f"{_OTA_ASSET_BASE_URL}/fsl_model.tflite",
 )
 _OTA_MODEL_SHA256 = os.environ.get(
     "OTA_MODEL_SHA256",
-    "4f5b8def4902dc79846420396285ca9c04078ea76ebd105b5247dc7f19a388e2",
+    "f7b7a93af2062d5547593c4c801755fd632c4888f53e82a41568a1c94ffd975f",
 )
 _OTA_ALPHABET_URL = os.environ.get(
     "OTA_ALPHABET_URL",
-    "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_alphabet.tflite",
+    f"{_OTA_ASSET_BASE_URL}/fsl_alphabet.tflite",
 )
 _OTA_ALPHABET_SHA256 = os.environ.get(
     "OTA_ALPHABET_SHA256",
-    "33e45a06f2a133969d50554211e280ddf040825478e6e748e4d63b7ec2de4b97",
+    "1231efe25942a498fe5a97c38ee3b4a6f835d2584dc3009add143d0b03330d41",
 )
 _OTA_MEDICAL_URL = os.environ.get(
     "OTA_MEDICAL_URL",
-    "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_medical.tflite",
+    f"{_OTA_ASSET_BASE_URL}/fsl_medical.tflite",
 )
 _OTA_MEDICAL_SHA256 = os.environ.get(
     "OTA_MEDICAL_SHA256",
-    "b0825c8fb7cc35fae8171ea5532fc75b247bb9cc1b62afd1fa4fbfb25cd4ab20",
+    "7964746f3b3cd717c1361d7a97f756e5577f834eebbdf9e601055b2c86d006e9",
 )
-_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.2.2")
+_OTA_LABELS_URL = os.environ.get(
+    "OTA_LABELS_URL", f"{_OTA_ASSET_BASE_URL}/labels.txt"
+)
+_OTA_LABELS_SHA256 = os.environ.get(
+    "OTA_LABELS_SHA256",
+    "866cbc2ca625cddde62744689e8780694ca3af8d165a5cc3e9092da1f4a84bcb",
+)
+_OTA_MEDICAL_LABELS_URL = os.environ.get(
+    "OTA_MEDICAL_LABELS_URL", f"{_OTA_ASSET_BASE_URL}/medical_labels.txt"
+)
+_OTA_MEDICAL_LABELS_SHA256 = os.environ.get(
+    "OTA_MEDICAL_LABELS_SHA256",
+    "853eb0371cf7bedff6f2e292c791c78173874703284002cabf991b1084772c1d",
+)
+_OTA_ALPHABET_LABELS_URL = os.environ.get(
+    "OTA_ALPHABET_LABELS_URL", f"{_OTA_ASSET_BASE_URL}/alphabet_labels.txt"
+)
+_OTA_ALPHABET_LABELS_SHA256 = os.environ.get(
+    "OTA_ALPHABET_LABELS_SHA256",
+    "6e0c47a0065919a1ca327414c577e9ed6888ab292ddabed5402a04445136544f",
+)
+_OTA_MODEL_VERSION = os.environ.get("OTA_MODEL_VERSION", "1.3.0")
+_OTA_MIN_APP_VERSION = os.environ.get("OTA_MIN_APP_VERSION", "1.2.16")
+try:
+    _OTA_MIN_APP_BUILD = int(os.environ.get("OTA_MIN_APP_BUILD", "2019"))
+except ValueError:
+    logger.warning("Invalid OTA_MIN_APP_BUILD; using the safe default build 2019.")
+    _OTA_MIN_APP_BUILD = 2019
 
 
 @app.get("/api/v1/ota/manifest", response_model=ModelManifest, tags=["OTA Updates"])
@@ -168,8 +200,9 @@ async def get_model_manifest():
         version=_OTA_MODEL_VERSION,
         url=_OTA_MODEL_URL,
         sha256=_OTA_MODEL_SHA256,
-        min_app_version="1.0.0",
-        notes="Connected pose and hand ST-GCN. Internal sample-level results improved slightly; signer-independent Deaf-user validation is still needed.",
+        min_app_version=_OTA_MIN_APP_VERSION,
+        min_app_build=_OTA_MIN_APP_BUILD,
+        notes="6199 archive candidate model bundle. Signer-independent validation with Deaf FSL users is still required.",
         models=[
             ModelFileItem(
                 name="fsl_alphabet.tflite",
@@ -185,6 +218,21 @@ async def get_model_manifest():
                 name="fsl_medical.tflite",
                 url=_OTA_MEDICAL_URL,
                 sha256=_OTA_MEDICAL_SHA256,
+            ),
+            ModelFileItem(
+                name="labels.txt",
+                url=_OTA_LABELS_URL,
+                sha256=_OTA_LABELS_SHA256,
+            ),
+            ModelFileItem(
+                name="medical_labels.txt",
+                url=_OTA_MEDICAL_LABELS_URL,
+                sha256=_OTA_MEDICAL_LABELS_SHA256,
+            ),
+            ModelFileItem(
+                name="alphabet_labels.txt",
+                url=_OTA_ALPHABET_LABELS_URL,
+                sha256=_OTA_ALPHABET_LABELS_SHA256,
             ),
         ],
     )

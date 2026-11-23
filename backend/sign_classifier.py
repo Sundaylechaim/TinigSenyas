@@ -25,13 +25,19 @@ TOTAL_JOINTS = 75
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
+APP_MODEL_DIR = os.path.abspath(
+    os.environ.get(
+        "FSL_MODEL_DIR",
+        os.path.join(BASE_DIR, "..", "frontend", "assets", "model"),
+    )
+)
 
-CLASSES_PATH = os.path.join(MODELS_DIR, "classes.npy")
-TFLITE_PATH = os.path.join(MODELS_DIR, "fsl_model.tflite")
-ALPHABET_CLASSES_PATH = os.path.join(MODELS_DIR, "alphabet_classes.npy")
-ALPHABET_TFLITE_PATH = os.path.join(MODELS_DIR, "fsl_alphabet.tflite")
-MEDICAL_CLASSES_PATH = os.path.join(MODELS_DIR, "medical_classes.npy")
-MEDICAL_TFLITE_PATH = os.path.join(MODELS_DIR, "fsl_medical.tflite")
+CLASSES_PATH = os.path.join(APP_MODEL_DIR, "labels.txt")
+TFLITE_PATH = os.path.join(APP_MODEL_DIR, "fsl_model.tflite")
+ALPHABET_CLASSES_PATH = os.path.join(APP_MODEL_DIR, "alphabet_labels.txt")
+ALPHABET_TFLITE_PATH = os.path.join(APP_MODEL_DIR, "fsl_alphabet.tflite")
+MEDICAL_CLASSES_PATH = os.path.join(APP_MODEL_DIR, "medical_labels.txt")
+MEDICAL_TFLITE_PATH = os.path.join(APP_MODEL_DIR, "fsl_medical.tflite")
 HAND_LANDMARKER_PATH = os.path.join(MODELS_DIR, "hand_landmarker.task")
 POSE_LANDMARKER_PATH = os.path.join(MODELS_DIR, "pose_landmarker_lite.task")
 
@@ -101,6 +107,17 @@ def resample_sequence(sequence: np.ndarray, target_length: int = SEQUENCE_LENGTH
     return ((1.0 - alpha) * sequence[lower] + alpha * sequence[upper]).astype(np.float32)
 
 
+def _load_labels(path: str) -> np.ndarray:
+    """Read the same UTF-8 label files bundled with the Flutter application."""
+    with open(path, "r", encoding="utf-8-sig") as labels_file:
+        labels = [line.strip() for line in labels_file if line.strip()]
+    if not labels:
+        raise ValueError(f"Model label file is empty: {path}")
+    if len(labels) != len(set(labels)):
+        raise ValueError(f"Model label file contains duplicate labels: {path}")
+    return np.asarray(labels, dtype=str)
+
+
 class SignClassifier:
     def __init__(self):
         # Validate paths
@@ -108,13 +125,13 @@ class SignClassifier:
             if not os.path.isfile(path):
                 raise FileNotFoundError(f"Missing required model asset: {path}")
 
-        self.classes = np.load(CLASSES_PATH, allow_pickle=True)
+        self.classes = _load_labels(CLASSES_PATH)
         self.num_classes = len(self.classes)
 
         self.has_medical_model = False
         if os.path.isfile(MEDICAL_TFLITE_PATH) and os.path.isfile(MEDICAL_CLASSES_PATH):
             try:
-                self.medical_classes = np.load(MEDICAL_CLASSES_PATH, allow_pickle=True)
+                self.medical_classes = _load_labels(MEDICAL_CLASSES_PATH)
                 self.has_medical_model = True
             except Exception:
                 self.has_medical_model = False
@@ -123,7 +140,7 @@ class SignClassifier:
         self.has_alphabet_model = False
         if os.path.isfile(ALPHABET_TFLITE_PATH) and os.path.isfile(ALPHABET_CLASSES_PATH):
             try:
-                self.alphabet_classes = np.load(ALPHABET_CLASSES_PATH, allow_pickle=True)
+                self.alphabet_classes = _load_labels(ALPHABET_CLASSES_PATH)
                 self.has_alphabet_model = True
             except Exception:
                 self.has_alphabet_model = False
@@ -182,6 +199,14 @@ class SignClassifier:
         self.interpreter.allocate_tensors()
         self.input_index = self.interpreter.get_input_details()[0]["index"]
         self.output_index = self.interpreter.get_output_details()[0]["index"]
+        phrase_output_count = int(
+            self.interpreter.get_output_details()[0]["shape"][-1]
+        )
+        if phrase_output_count != self.num_classes:
+            raise ValueError(
+                f"Phrase model has {phrase_output_count} outputs but "
+                f"{self.num_classes} labels were loaded from {CLASSES_PATH}."
+            )
 
         if self.has_alphabet_model:
             try:
@@ -189,7 +214,16 @@ class SignClassifier:
                 self.alphabet_interpreter.allocate_tensors()
                 self.alphabet_input_index = self.alphabet_interpreter.get_input_details()[0]["index"]
                 self.alphabet_output_index = self.alphabet_interpreter.get_output_details()[0]["index"]
+                alphabet_output_count = int(
+                    self.alphabet_interpreter.get_output_details()[0]["shape"][-1]
+                )
+                if alphabet_output_count != len(self.alphabet_classes):
+                    raise ValueError(
+                        f"Alphabet model has {alphabet_output_count} outputs but "
+                        f"{len(self.alphabet_classes)} labels were loaded."
+                    )
             except Exception as e:
+                print(f"[SignClassifier] Alphabet FSL model could not be initialized: {e}")
                 self.has_alphabet_model = False
 
         if self.has_medical_model:

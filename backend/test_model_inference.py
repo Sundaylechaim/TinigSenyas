@@ -16,25 +16,44 @@ class TestModelInference(unittest.TestCase):
     def setUpClass(cls):
         cls.base_dir = os.path.dirname(os.path.abspath(__file__))
         cls.models_dir = os.path.join(cls.base_dir, "models")
-        cls.classes_path = os.path.join(cls.models_dir, "classes.npy")
-        cls.tflite_path = os.path.join(cls.models_dir, "fsl_model.tflite")
-        cls.alphabet_classes_path = os.path.join(cls.models_dir, "alphabet_classes.npy")
-        cls.alphabet_tflite_path = os.path.join(cls.models_dir, "fsl_alphabet.tflite")
+        cls.app_model_dir = os.path.join(
+            os.path.dirname(cls.base_dir), "frontend", "assets", "model"
+        )
+        cls.classes_path = os.path.join(cls.app_model_dir, "labels.txt")
+        cls.tflite_path = os.path.join(cls.app_model_dir, "fsl_model.tflite")
+        cls.alphabet_classes_path = os.path.join(
+            cls.app_model_dir, "alphabet_labels.txt"
+        )
+        cls.alphabet_tflite_path = os.path.join(
+            cls.app_model_dir, "fsl_alphabet.tflite"
+        )
         cls.hand_task = os.path.join(cls.models_dir, "hand_landmarker.task")
         cls.pose_task = os.path.join(cls.models_dir, "pose_landmarker_lite.task")
 
     def test_01_assets_exist(self):
-        """Verify all trained artifacts exist in backend/models/"""
-        self.assertTrue(os.path.isfile(self.classes_path), "classes.npy is missing")
+        """Verify inference uses the app's canonical model and label bundle."""
+        self.assertTrue(os.path.isfile(self.classes_path), "labels.txt is missing")
         self.assertTrue(os.path.isfile(self.tflite_path), "fsl_model.tflite is missing")
-        self.assertTrue(os.path.isfile(self.alphabet_classes_path), "alphabet_classes.npy is missing")
+        self.assertTrue(
+            os.path.isfile(self.alphabet_classes_path),
+            "alphabet_labels.txt is missing",
+        )
         self.assertTrue(os.path.isfile(self.alphabet_tflite_path), "fsl_alphabet.tflite is missing")
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.app_model_dir, "medical_labels.txt")),
+            "medical_labels.txt is missing",
+        )
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.app_model_dir, "fsl_medical.tflite")),
+            "fsl_medical.tflite is missing",
+        )
         self.assertTrue(os.path.isfile(self.hand_task), "hand_landmarker.task is missing")
         self.assertTrue(os.path.isfile(self.pose_task), "pose_landmarker_lite.task is missing")
 
     def test_02_classes_content(self):
         """Verify the 103 conversational FSL classes are properly structured and include core everyday signs"""
-        classes = np.load(self.classes_path, allow_pickle=True)
+        with open(self.classes_path, "r", encoding="utf-8-sig") as labels_file:
+            classes = [line.strip() for line in labels_file if line.strip()]
         self.assertEqual(len(classes), 103, f"Expected 103 classes, found {len(classes)}")
         # Check core conversational keywords
         for keyword in ("Salamat", "Walang anuman", "Kamusta", "Oo", "Hindi", "Ina", "Ama"):
@@ -66,7 +85,8 @@ class TestModelInference(unittest.TestCase):
         interpreter.invoke()
 
         output_data = interpreter.get_tensor(output_details[0]["index"])[0]
-        classes = np.load(self.classes_path, allow_pickle=True)
+        with open(self.classes_path, "r", encoding="utf-8-sig") as labels_file:
+            classes = [line.strip() for line in labels_file if line.strip()]
         self.assertEqual(len(output_data), len(classes), f"Expected {len(classes)} output probabilities, got {len(output_data)}")
 
         top_class_idx = int(np.argmax(output_data))
@@ -89,7 +109,8 @@ class TestModelInference(unittest.TestCase):
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
 
-        alpha_classes = np.load(self.alphabet_classes_path, allow_pickle=True)
+        with open(self.alphabet_classes_path, "r", encoding="utf-8-sig") as labels_file:
+            alpha_classes = [line.strip() for line in labels_file if line.strip()]
         num_alpha = len(alpha_classes)
         self.assertEqual(str(alpha_classes[-1]), "\u00d1")
         self.assertEqual(list(input_details[0]["shape"]), [1, 63])
@@ -105,9 +126,9 @@ class TestModelInference(unittest.TestCase):
         print(f"[OK] Alphabet model inference succeeded! Predicted letter: '{pred_letter}' (out of {num_alpha} letters)")
 
     def test_04b_medical_inference(self):
-        """Verify the dedicated Medical FSL model matches its 25 class labels."""
-        medical_model_path = os.path.join(self.models_dir, "fsl_medical.tflite")
-        medical_classes_path = os.path.join(self.models_dir, "medical_classes.npy")
+        """Verify the dedicated app-bundled Medical FSL model matches its labels."""
+        medical_model_path = os.path.join(self.app_model_dir, "fsl_medical.tflite")
+        medical_classes_path = os.path.join(self.app_model_dir, "medical_labels.txt")
         self.assertTrue(os.path.isfile(medical_model_path), "Medical FSL model is missing")
         self.assertTrue(os.path.isfile(medical_classes_path), "Medical FSL class labels are missing")
 
@@ -118,7 +139,9 @@ class TestModelInference(unittest.TestCase):
             tf_interp = importlib.import_module("tensorflow.lite.python.interpreter")
             Interpreter = getattr(tf_interp, "Interpreter")
 
-        classes = np.load(medical_classes_path, allow_pickle=True)
+        with open(medical_classes_path, "r", encoding="utf-8-sig") as labels_file:
+            classes = [line.strip() for line in labels_file if line.strip()]
+        self.assertEqual(len(classes), 35, "Expected the app's 35 medical labels")
         interpreter = Interpreter(model_path=medical_model_path)
         interpreter.allocate_tensors()
         input_details = interpreter.get_input_details()
@@ -134,8 +157,7 @@ class TestModelInference(unittest.TestCase):
         output = interpreter.get_tensor(output_details[0]["index"])[0]
         self.assertEqual(len(output), len(classes))
         print(
-            f"[OK] Medical FSL inference succeeded! "
-            f"Output labels: {len(classes)} (17 named, 8 placeholders)."
+            f"[OK] Medical FSL inference succeeded! Output labels: {len(classes)}."
         )
 
     def test_05_palm_detection_and_pause(self):

@@ -65,6 +65,33 @@ void main() {
     service.dispose();
   });
 
+  test(
+    'keeps live prediction polls single-flight when backend is slow',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform(
+        {},
+      );
+      final settings = SettingsService();
+      await settings.init();
+      await settings.setTtsServer(url: 'http://127.0.0.1:5000', token: '');
+      final adapter = _RecognitionAdapter()
+        ..liveDelay = const Duration(milliseconds: 350);
+      final service = BackendRecognitionService(
+        settings: settings,
+        dio: Dio()..httpClientAdapter = adapter,
+      );
+
+      await service.initialize();
+      await service.start();
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      await service.stop();
+
+      expect(adapter.maxConcurrentLiveRequests, 1);
+      service.dispose();
+    },
+  );
+
   test('applies Chapter 3 confidence and top-2 margin gate', () async {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform(
@@ -143,6 +170,9 @@ void main() {
 class _RecognitionAdapter implements HttpClientAdapter {
   Map<String, Object?>? nextLivePayload;
   String? lastRequestedMode;
+  Duration liveDelay = Duration.zero;
+  int activeLiveRequests = 0;
+  int maxConcurrentLiveRequests = 0;
 
   @override
   Future<ResponseBody> fetch(
@@ -160,18 +190,27 @@ class _RecognitionAdapter implements HttpClientAdapter {
     }
     if (options.method == 'GET' &&
         options.path.endsWith('/api/v1/predict/live')) {
-      return _jsonResponse(
-        options,
-        nextLivePayload ??
-            {
-              'is_paused': false,
-              'is_stable': false,
-              'label': null,
-              'confidence': 0.0,
-              'top2_label': '',
-              'top2_confidence': 0.0,
-            },
-      );
+      activeLiveRequests++;
+      if (activeLiveRequests > maxConcurrentLiveRequests) {
+        maxConcurrentLiveRequests = activeLiveRequests;
+      }
+      try {
+        if (liveDelay > Duration.zero) await Future<void>.delayed(liveDelay);
+        return _jsonResponse(
+          options,
+          nextLivePayload ??
+              {
+                'is_paused': false,
+                'is_stable': false,
+                'label': null,
+                'confidence': 0.0,
+                'top2_label': '',
+                'top2_confidence': 0.0,
+              },
+        );
+      } finally {
+        activeLiveRequests--;
+      }
     }
     if (options.method == 'GET') {
       return _jsonResponse(options, {

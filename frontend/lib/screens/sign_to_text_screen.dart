@@ -21,6 +21,7 @@ import '../services/word_prediction_service.dart';
 import '../services/settings_service.dart';
 import '../services/model_updater.dart';
 import '../services/sign_animation_catalog.dart';
+import '../services/vocabulary_sync_service.dart';
 import '../services/recognition/recognition_service.dart' show RecognitionMode;
 import '../widgets/gesture_motion_replay.dart';
 import 'text_to_sign_screen.dart';
@@ -114,6 +115,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     _ttsService = context.read<TtsService>();
     _recognitionProvider = context.read<RecognitionProvider>();
     unawaited(_loadSignAnimationCatalog());
+    unawaited(_loadSyncedVocabulary());
     _predictionSubscription = _recognitionProvider!.predictions.listen((
       prediction,
     ) {
@@ -177,6 +179,24 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     }
 
     _updateWakelock(true);
+  }
+
+  Future<void> _loadSyncedVocabulary() async {
+    try {
+      final database = context.read<DatabaseHelper>();
+      final settings = context.read<SettingsService>();
+      final predictionService = _wordPredictionService;
+      predictionService.addVocabulary(await database.getVocabularyWords());
+
+      final syncedCount = await VocabularySyncService(
+        store: database,
+      ).syncFrom(settings.ttsServerUrl);
+      if (syncedCount > 0) {
+        predictionService.addVocabulary(await database.getVocabularyWords());
+      }
+    } catch (error) {
+      debugPrint('[SignToText] Vocabulary cache unavailable: $error');
+    }
   }
 
   Future<void> _loadSignAnimationCatalog() async {
@@ -281,7 +301,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
       _updateWakelock(false);
-      _cameraService.dispose();
+      unawaited(_cameraService.dispose());
       if (mounted) {
         setState(() => _isCameraInitialized = false);
       }
@@ -919,7 +939,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     _pauseSubscription?.cancel();
     _landmarksSubscription?.cancel();
     _frameSubscription?.cancel();
-    _cameraService.dispose();
+    unawaited(_cameraService.dispose());
     final recognitionProvider = _recognitionProvider;
     if (recognitionProvider != null) unawaited(recognitionProvider.stop());
     super.dispose();
@@ -1623,10 +1643,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildFingerspellingWordAssembler(),
-                  _buildActionCard(),
-                ],
+                children: [_buildActionCard()],
               ),
             ),
           ),
@@ -1692,10 +1709,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildFingerspellingWordAssembler(),
-                  _buildActionCard(),
-                ],
+                children: [_buildActionCard()],
               ),
             ),
           ),
@@ -1716,29 +1730,22 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     final isDark = theme.brightness == Brightness.dark;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(top: 8),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(14),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: isDark
                   ? const Color(0xFF0F172A).withValues(alpha: 0.90)
                   : Colors.white.withValues(alpha: 0.95),
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
                 color: _kAppBlue.withValues(alpha: 0.35),
-                width: 1.5,
+                width: 1,
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
-                ),
-              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1748,7 +1755,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(6),
+                      padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
                         color: _kAppBlue.withValues(alpha: 0.15),
                         shape: BoxShape.circle,
@@ -1756,7 +1763,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                       child: const Icon(
                         Icons.spellcheck_rounded,
                         color: _kAppBlue,
-                        size: 18,
+                        size: 16,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -1770,6 +1777,14 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                                 : const Color(0xFF0F172A),
                           ),
                           children: [
+                            const TextSpan(
+                              text: 'Word: ',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
                             if (_composedSentence.isNotEmpty)
                               TextSpan(
                                 text: '$_composedSentence ',
@@ -1797,19 +1812,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                       constraints: const BoxConstraints(),
                       onPressed: _backspaceLetter,
                     ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(
-                        Icons.volume_up_rounded,
-                        color: _kAppBlue,
-                        size: 20,
-                      ),
-                      tooltip: 'Speak sentence',
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      onPressed: _speakComposedSentence,
-                    ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     IconButton(
                       icon: const Icon(Icons.close_rounded, size: 18),
                       tooltip: 'Clear',
@@ -1888,25 +1891,39 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     final isReady =
         _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final confidence = _currentPrediction?.confidence ?? 0.0;
-    final isConfidenceHigh = confidence >= 0.75;
+    final isUncertainPrediction = hasPrediction && confidence < 0.60;
     final animationPrediction = isPaused
         ? _lastRecognizedSign
         : _currentPrediction;
+    final hasReplay =
+        animationPrediction != null &&
+        (_gestureReplayFrames.isNotEmpty ||
+            SignAnimationCatalog.assetForLabel(
+                  _availableAnimationSlugs,
+                  animationPrediction.label,
+                ) !=
+                null ||
+            RegExp(
+              r'^(?:[A-ZÑ]|NG)$',
+              caseSensitive: false,
+            ).hasMatch(animationPrediction.label.trim()));
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: isDark
                 ? const Color(0xFF0C1220).withValues(alpha: 0.90)
                 : Colors.white.withValues(alpha: 0.95),
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: isPaused
                   ? _kAppYellow.withValues(alpha: 0.5)
+                  : isUncertainPrediction
+                  ? const Color(0xFFD97706).withValues(alpha: 0.45)
                   : (isDark
                         ? Colors.white.withValues(alpha: 0.20)
                         : Colors.white),
@@ -1914,9 +1931,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.25),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
@@ -1926,16 +1943,14 @@ class _SignToTextScreenState extends State<SignToTextScreen>
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.all(7),
                     decoration: BoxDecoration(
                       color: isPaused
                           ? const Color(0xFFD97706).withValues(alpha: 0.18)
+                          : isUncertainPrediction
+                          ? const Color(0xFFD97706).withValues(alpha: 0.16)
                           : hasPrediction
-                          ? (isConfidenceHigh
-                                ? const Color(
-                                    0xFF10B981,
-                                  ).withValues(alpha: 0.18)
-                                : _kAppBlue.withValues(alpha: 0.15))
+                          ? _kAppBlue.withValues(alpha: 0.15)
                           : Colors.grey.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
@@ -1943,30 +1958,30 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                       isPaused
                           ? Icons.pause_circle_filled_rounded
                           : hasPrediction
-                          ? (isConfidenceHigh
-                                ? Icons.verified_rounded
-                                : Icons.check_circle_rounded)
+                          ? (isUncertainPrediction
+                                ? Icons.help_outline_rounded
+                                : Icons.sign_language_rounded)
                           : Icons.radar_rounded,
                       color: isPaused
                           ? const Color(0xFFD97706)
                           : hasPrediction
-                          ? (isConfidenceHigh
-                                ? const Color(0xFF10B981)
+                          ? (isUncertainPrediction
+                                ? const Color(0xFFD97706)
                                 : _kAppBlue)
                           : Colors.grey,
-                      size: 26,
+                      size: 22,
                     ),
                   ),
-                  const SizedBox(width: 14),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Semantics(
                       liveRegion: true,
                       label: isPaused
-                          ? 'Sign recognition paused. Hands at rest. Raise hands into frame to sign.'
+                          ? 'Sign recognition paused. Tap resume to continue.'
                           : hasPrediction
-                          ? 'Recognized Filipino sign: ${_currentPrediction!.label}, confidence ${(confidence * 100).toInt()} percent'
+                          ? '${isUncertainPrediction ? 'Possible sign' : 'Sign detected'}: ${_currentPrediction!.label}. Model score ${(confidence * 100).toInt()} percent. Check the result before sharing.'
                           : isReady
-                          ? 'Camera ready. Position hand gestures in frame to sign.'
+                          ? 'Camera ready. Follow the framing guide and sign one item at a time.'
                           : 'Initializing sign recognition model.',
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1974,12 +1989,16 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                         children: [
                           Text(
                             isPaused
-                                ? '⏸️ Paused (Hands at rest)'
+                                ? 'Recognition paused'
                                 : hasPrediction
-                                ? _currentPrediction!.label
+                                ? (isUncertainPrediction
+                                      ? 'Possible: ${_currentPrediction!.label}'
+                                      : _currentPrediction!.label)
                                 : isReady
-                                ? 'Position hands to sign...'
+                                ? 'Ready to sign'
                                 : 'Initializing FSL model...',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: (isPaused || hasPrediction) ? 20 : 15,
                               fontWeight: FontWeight.w900,
@@ -1993,28 +2012,6 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                                         : const Color(0xFF0F172A)),
                             ),
                           ),
-                          if (isPaused)
-                            Text(
-                              'Buffer flushed • Ready for next sign',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: isDark
-                                    ? const Color(0xFF94A3B8)
-                                    : const Color(0xFF64748B),
-                              ),
-                            )
-                          else if (hasPrediction)
-                            Text(
-                              'Filipino Sign Language',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: isDark
-                                    ? const Color(0xFF94A3B8)
-                                    : const Color(0xFF64748B),
-                              ),
-                            ),
                         ],
                       ),
                     ),
@@ -2059,38 +2056,39 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                             vertical: 5,
                           ),
                           decoration: BoxDecoration(
-                            color: isConfidenceHigh
-                                ? const Color(0xFF10B981)
-                                : (confidence >= 0.60
-                                      ? _kAppBlue
-                                      : _kAppYellow),
+                            color: isUncertainPrediction
+                                ? _kAppYellow
+                                : _kAppBlue,
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                isConfidenceHigh
-                                    ? Icons.verified_rounded
-                                    : Icons.trending_up_rounded,
-                                size: 13,
-                                color: (isConfidenceHigh || confidence >= 0.60)
-                                    ? Colors.white
-                                    : const Color(0xFF111827),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${(confidence * 100).toInt()}%',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 12,
-                                  color:
-                                      (isConfidenceHigh || confidence >= 0.60)
-                                      ? Colors.white
-                                      : const Color(0xFF111827),
+                          child: Semantics(
+                            label:
+                                'Model score ${(confidence * 100).toInt()} percent. Check this result before sharing.',
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  isUncertainPrediction
+                                      ? Icons.help_outline_rounded
+                                      : Icons.analytics_outlined,
+                                  size: 13,
+                                  color: isUncertainPrediction
+                                      ? const Color(0xFF111827)
+                                      : Colors.white,
                                 ),
-                              ),
-                            ],
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${(confidence * 100).toInt()}% score',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 10,
+                                    color: isUncertainPrediction
+                                        ? const Color(0xFF111827)
+                                        : Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       const SizedBox(width: 6),
@@ -2117,11 +2115,11 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              if (animationPrediction != null) ...[
-                _buildPredictionAnimation(isDark, animationPrediction),
-                const SizedBox(height: 12),
-              ],
+              if (_activeWordBuffer.isNotEmpty ||
+                  _composedSentence.isNotEmpty ||
+                  _suggestedWords.isNotEmpty)
+                _buildFingerspellingWordAssembler(),
+              const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -2157,19 +2155,33 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                     onPressed: _showGuide,
                     color: const Color(0xFF6366F1),
                   ),
+                  if (hasReplay)
+                    _ActionButton(
+                      icon: Icons.play_arrow_rounded,
+                      label: 'Replay',
+                      tooltip: 'View signing replay',
+                      semanticLabel: 'View signing replay',
+                      onPressed: () =>
+                          _showPredictionReplay(isDark, animationPrediction),
+                      color: const Color(0xFF64748B),
+                    ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 6),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
                   onPressed: _openTypeAndSpeakFallback,
                   icon: const Icon(Icons.keyboard_alt_outlined, size: 18),
-                  label: const Text('Phrase missed? Type message & speak'),
+                  label: Text(
+                    'Type a message instead',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: _kAppBlue,
                     side: BorderSide(color: _kAppBlue.withValues(alpha: 0.45)),
-                    minimumSize: const Size.fromHeight(44),
+                    minimumSize: const Size.fromHeight(38),
                   ),
                 ),
               ),
@@ -2301,32 +2313,61 @@ class _SignToTextScreenState extends State<SignToTextScreen>
         _isModelReady || (_recognitionProvider?.isModelReady ?? false);
     final isPaused = _isPaused;
     final isTracking = _liveLandmarks.isNotEmpty && !isPaused;
+    final hasPrediction = _currentPrediction != null && !isPaused;
+    final isUncertainPrediction =
+        hasPrediction && _currentPrediction!.confidence < 0.60;
     final framingHint = _currentMode == RecognitionMode.alphabet
-        ? 'Keep your signing hand in the frame.'
-        : 'Keep your head, torso and signing hands visible.';
+        ? 'Keep your signing hand centered and fully visible.'
+        : 'Keep your face, upper body, and hands inside the guide.';
+    final signingHint = switch (_currentMode) {
+      RecognitionMode.phrases =>
+        'Sign one phrase clearly, then lower your hands briefly.',
+      RecognitionMode.alphabet =>
+        'Hold one letter steady; lower your hand between letters.',
+      RecognitionMode.medical =>
+        'Sign one health item, then lower your hands briefly.',
+      RecognitionMode.auto =>
+        'Sign one item at a time, then lower your hands briefly.',
+    };
 
     final String message;
+    final String hint;
     final IconData icon;
     final Color iconColor;
 
     if (_recognitionError != null) {
       message = _recognitionError!;
+      hint = 'Check the camera and lighting, then try again.';
       icon = Icons.error_outline_rounded;
       iconColor = Colors.white;
     } else if (isPaused) {
-      message = '⏸️ Reader Paused • Raise hands to resume';
+      message = 'Recognition paused';
+      hint = 'Tap the play button below to resume.';
       icon = Icons.pause_circle_rounded;
       iconColor = Colors.white;
+    } else if (isUncertainPrediction) {
+      message = 'Possible match • Check the result below';
+      hint = 'Not right? Sign it again or use the text option below.';
+      icon = Icons.help_outline_rounded;
+      iconColor = const Color(0xFFD97706);
+    } else if (hasPrediction) {
+      message = 'Sign detected • Check the result below';
+      hint = 'Confirm the label before speaking or sharing it.';
+      icon = Icons.sign_language_rounded;
+      iconColor = _kAppBlue;
     } else if (isTracking) {
-      message = '👋 Hand tracked • Signing active';
+      message = 'Hands in frame';
+      hint = signingHint;
       icon = Icons.front_hand_rounded;
       iconColor = const Color(0xFF10B981); // Emerald Green
     } else if (isReady) {
-      message = '✨ Ready • Raise hand in front of camera';
+      message = 'Ready to sign';
+      hint = framingHint;
       icon = Icons.videocam_rounded;
       iconColor = _kAppBlue;
     } else {
-      message = 'Initializing FSL sign engine...';
+      message = 'Preparing sign recognition…';
+      hint = 'Keep the camera open while the model starts.';
       icon = Icons.hourglass_top_rounded;
       iconColor = _kAppYellow;
     }
@@ -2342,6 +2383,10 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                 ? Colors.redAccent.withValues(alpha: 0.85)
                 : isPaused
                 ? const Color(0xFFD97706).withValues(alpha: 0.90)
+                : isUncertainPrediction
+                ? (isDark
+                      ? const Color(0xFF3B321B).withValues(alpha: 0.94)
+                      : const Color(0xFFFFF4CC).withValues(alpha: 0.96))
                 : (isDark
                       ? const Color(0xFF0C1220).withValues(alpha: 0.75)
                       : Colors.white.withValues(alpha: 0.85)),
@@ -2349,6 +2394,8 @@ class _SignToTextScreenState extends State<SignToTextScreen>
             border: Border.all(
               color: isPaused
                   ? _kAppYellow.withValues(alpha: 0.6)
+                  : isUncertainPrediction
+                  ? const Color(0xFFD97706).withValues(alpha: 0.55)
                   : isTracking
                   ? const Color(0xFF10B981).withValues(alpha: 0.5)
                   : (isDark ? Colors.white12 : Colors.white60),
@@ -2362,7 +2409,9 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                 children: [
                   Icon(
                     icon,
-                    color: (_recognitionError != null || isPaused)
+                    color:
+                        (_recognitionError != null || isPaused) &&
+                            !isUncertainPrediction
                         ? Colors.white
                         : iconColor,
                     size: 20,
@@ -2380,22 +2429,30 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                           style: TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 13,
-                            color: (_recognitionError != null || isPaused)
+                            color:
+                                (_recognitionError != null || isPaused) &&
+                                    !isUncertainPrediction
                                 ? Colors.white
                                 : (isDark
                                       ? Colors.white
                                       : const Color(0xFF0F172A)),
                           ),
                         ),
-                        if (_recognitionError == null && !isPaused) ...[
+                        if (_recognitionError == null) ...[
                           const SizedBox(height: 3),
                           Text(
-                            framingHint,
+                            hint,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11,
-                              color: isDark
+                              color: isPaused
+                                  ? Colors.white.withValues(alpha: 0.92)
+                                  : isUncertainPrediction
+                                  ? (isDark
+                                        ? const Color(0xFFE6C86E)
+                                        : const Color(0xFF805000))
+                                  : isDark
                                   ? Colors.white70
                                   : const Color(0xFF475569),
                             ),
@@ -2427,18 +2484,6 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                       )
                     else
                       const Spacer(),
-                    if (_cameraService.canSwitchCamera) ...[
-                      _statusControl(
-                        icon: Icons.cameraswitch_rounded,
-                        label: 'Switch',
-                        semanticLabel: 'Switch between front and back camera',
-                        onTap: () {
-                          HapticFeedback.selectionClick();
-                          _showCameraPicker();
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                    ],
                     _statusControl(
                       icon: _currentMode == RecognitionMode.phrases
                           ? Icons.chat_bubble_outline_rounded
@@ -2512,6 +2557,32 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   void _showGuide() {
     showFslGuideSheet(context);
   }
+
+  void _showPredictionReplay(bool isDark, SignResult prediction) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: isDark ? const Color(0xFF0C1220) : Colors.white,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Signing replay',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 12),
+              _buildPredictionAnimation(isDark, prediction),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ActionButton extends StatelessWidget {
@@ -2552,8 +2623,8 @@ class _ActionButton extends StatelessWidget {
               child: Tooltip(
                 message: tooltip ?? label,
                 child: Container(
-                  width: 56,
-                  height: 56,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
@@ -2561,15 +2632,15 @@ class _ActionButton extends StatelessWidget {
                       width: 1.5,
                     ),
                   ),
-                  child: Center(child: Icon(icon, color: color, size: 26)),
+                  child: Center(child: Icon(icon, color: color, size: 22)),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 3),
           Text(
             label,
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 10),
           ),
         ],
       ),

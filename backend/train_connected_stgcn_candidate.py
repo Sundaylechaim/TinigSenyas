@@ -8,9 +8,12 @@ a signer-independent estimate of real-world accuracy.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import random
+import tempfile
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +30,51 @@ COORDINATES = 3
 INPUT_SHAPE = (SEQUENCE_LENGTH, TOTAL_JOINTS, COORDINATES)
 SEED = 42
 MIN_SHOULDER_WIDTH = 0.05
+
+
+def load_compatible_checkpoint(checkpoint_path: Path) -> tf.keras.Model:
+    """Load a Keras archive after dropping removed, disabled BatchNorm options."""
+    with zipfile.ZipFile(checkpoint_path) as archive:
+        names = archive.namelist()
+        if "config.json" not in names:
+            raise ValueError(f"Keras checkpoint has no config.json: {checkpoint_path}")
+        config = json.loads(archive.read("config.json"))
+
+        def strip_unsupported_checkpoint_metadata(value):
+            if isinstance(value, dict):
+                layer_config = value.get("config")
+                if isinstance(layer_config, dict) and layer_config.get("quantization_config") is None:
+                    layer_config.pop("quantization_config", None)
+                if value.get("class_name") == "BatchNormalization" and isinstance(value.get("config"), dict):
+                    for option in ("renorm", "renorm_clipping", "renorm_momentum"):
+                        value["config"].pop(option, None)
+                if value.get("class_name") == "GlorotUniform" and isinstance(value.get("config"), dict):
+                    # Newer Keras records these axes; they do not affect a model
+                    # after the saved weights are restored.
+                    value["config"].pop("input_axes", None)
+                    value["config"].pop("output_axes", None)
+                for nested in value.values():
+                    strip_unsupported_checkpoint_metadata(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    strip_unsupported_checkpoint_metadata(nested)
+
+        strip_unsupported_checkpoint_metadata(config)
+        with tempfile.TemporaryDirectory(prefix="tinigsenyas_keras_") as temp_dir:
+            compatible_path = Path(temp_dir) / checkpoint_path.name
+            with zipfile.ZipFile(compatible_path, "w", compression=zipfile.ZIP_DEFLATED) as output:
+                for name in names:
+                    contents = (
+                        json.dumps(config, ensure_ascii=False).encode("utf-8")
+                        if name == "config.json"
+                        else archive.read(name)
+                    )
+                    output.writestr(name, contents)
+            return tf.keras.models.load_model(
+                compatible_path,
+                custom_objects={"TFLiteGraphConv": TFLiteGraphConv},
+                compile=False,
+            )
 
 
 def build_connected_adjacency() -> np.ndarray:
@@ -188,15 +236,31 @@ def augment_training_data(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.
 
 
 def load_dataset(dataset_dir: Path):
-    class_dirs = sorted(path for path in dataset_dir.iterdir() if path.is_dir())
-    labels: list[str] = []
+    feature_index = dataset_dir / "features.csv"
+    if feature_index.is_file():
+        with feature_index.open(encoding="utf-8-sig", newline="") as stream:
+            indexed_rows = list(csv.DictReader(stream))
+        labels = sorted({row["label"] for row in indexed_rows})
+        files_by_label = {
+            label: sorted(
+                (Path(row["feature_path"]) for row in indexed_rows if row["label"] == label),
+                key=str,
+            )
+            for label in labels
+        }
+    else:
+        class_dirs = sorted(path for path in dataset_dir.iterdir() if path.is_dir())
+        labels = [folder.name for folder in class_dirs]
+        files_by_label = {folder.name: sorted(folder.glob("*.npy")) for folder in class_dirs}
+
     samples: list[np.ndarray] = []
     targets: list[int] = []
     skipped = 0
 
-    for folder in class_dirs:
+    ordered_labels: list[str] = []
+    for label in labels:
         class_samples = []
-        for file in sorted(folder.glob("*.npy")):
+        for file in files_by_label[label]:
             try:
                 sample = np.load(file, allow_pickle=False)
             except Exception:
@@ -207,18 +271,18 @@ def load_dataset(dataset_dir: Path):
                 continue
             class_samples.append(sample.astype(np.float32))
         if class_samples:
-            label_index = len(labels)
-            labels.append(folder.name)
+            label_index = len(ordered_labels)
+            ordered_labels.append(label)
             samples.extend(class_samples)
             targets.extend([label_index] * len(class_samples))
 
-    if len(labels) != 103:
-        raise ValueError(f"Expected 103 classes; found {len(labels)}.")
+    if len(ordered_labels) != 103:
+        raise ValueError(f"Expected 103 classes; found {len(ordered_labels)}.")
     x = np.stack(samples).astype(np.float32)
     y = np.asarray(targets, dtype=np.int64)
     if any(np.count_nonzero(y == index) < 2 for index in range(len(labels))):
         raise ValueError("Every class needs at least two valid samples.")
-    return x, y, labels, skipped
+    return x, y, ordered_labels, skipped
 
 
 def build_model(num_classes: int) -> tf.keras.Model:
@@ -334,6 +398,7 @@ def main():
         type=Path,
         default=Path("tinigsenyas_training/best_fsl_model.keras"),
     )
+    parser.add_argument("--init-labels", type=Path, help="Label order used by --init-checkpoint.")
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=64)
     args = parser.parse_args()
@@ -382,10 +447,7 @@ def main():
 
     model = build_model(len(labels))
     if args.init_checkpoint.exists():
-        source_model = tf.keras.models.load_model(
-            args.init_checkpoint,
-            custom_objects={"TFLiteGraphConv": TFLiteGraphConv},
-        )
+        source_model = load_compatible_checkpoint(args.init_checkpoint)
         source_weights = source_model.get_weights()
         candidate_weights = [weight.copy() for weight in source_weights]
         model_weights = model.get_weights()
@@ -399,12 +461,15 @@ def main():
 
         # Reorder the classifier head from the existing model's labels to the
         # sorted dataset labels used by this candidate.
+        init_labels_path = args.init_labels or args.baseline_labels
         source_labels = [
             label.strip()
-            for label in args.baseline_labels.read_text(encoding="utf-8").splitlines()
+            for label in init_labels_path.read_text(encoding="utf-8").splitlines()
             if label.strip()
         ]
         source_index = {label: index for index, label in enumerate(source_labels)}
+        if len(source_index) != len(labels) or set(source_index) != set(labels):
+            raise ValueError(f"Init checkpoint label file does not match the training classes: {init_labels_path}")
         permutation = np.asarray([source_index[label] for label in labels])
         candidate_weights[-2] = source_weights[-2][:, permutation]
         candidate_weights[-1] = source_weights[-1][permutation]

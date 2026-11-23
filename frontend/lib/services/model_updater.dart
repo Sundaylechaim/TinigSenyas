@@ -8,6 +8,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_version.dart';
 
 enum UpdateStatus { upToDate, updateAvailable, error, downloading }
 
@@ -86,7 +87,16 @@ class ModelUpdateInfo {
 }
 
 class ModelUpdater {
-  static const currentAppVersion = '1.2.15';
+  static const currentAppVersion = AppVersion.name;
+  static const currentAppBuild = AppVersion.buildNumber;
+  static const _requiredModelFiles = <String>{
+    'fsl_model.tflite',
+    'fsl_alphabet.tflite',
+    'fsl_medical.tflite',
+    'labels.txt',
+    'medical_labels.txt',
+    'alphabet_labels.txt',
+  };
   static const defaultRemoteManifestUrl =
       'https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/manifest.json';
   static const _manifestAsset = 'assets/model/manifest.json';
@@ -115,11 +125,17 @@ class ModelUpdater {
     try {
       final prefs = await SharedPreferences.getInstance();
       final saved = prefs.getString(_prefsKey);
+      final bundled = (await rootBundle.loadString(_versionAsset)).trim();
       if (saved != null && saved.isNotEmpty) {
+        // Report the bundled version when the APK contains a newer model set,
+        // but leave the saved OTA version intact. Recognition uses that older
+        // value to reject stale local overrides until a matching OTA is saved.
+        if (_isVersionNewer(bundled, saved)) {
+          return bundled;
+        }
         return saved;
       }
-      final bundled = await rootBundle.loadString(_versionAsset);
-      return bundled.trim();
+      return bundled;
     } catch (_) {
       return '1.0.0';
     }
@@ -168,6 +184,16 @@ class ModelUpdater {
         RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(entry.sha256.trim());
   }
 
+  bool _isAppCompatible(Map<String, dynamic> manifest, String minAppVersion) {
+    if (manifest.containsKey('min_app_build')) {
+      final minimumBuild = int.tryParse(
+        manifest['min_app_build']?.toString() ?? '',
+      );
+      return minimumBuild != null && currentAppBuild >= minimumBuild;
+    }
+    return !_isVersionNewer(minAppVersion, currentAppVersion);
+  }
+
   /// Checks for model OTA updates online
   Future<ModelUpdateInfo> checkForUpdates() async {
     final currentVersion = await getInstalledVersion();
@@ -188,16 +214,16 @@ class ModelUpdater {
           final minApp = (data['min_app_version'] as String?) ?? '1.0.0';
           final notes = (data['notes'] as String?) ?? '';
           final models = _parseModelList(data, downloadUrl, sha256Hash);
-          final appCompatible = !_isVersionNewer(minApp, currentAppVersion);
+          final appCompatible = _isAppCompatible(data, minApp);
+          final isNewer = _isVersionNewer(remoteVer, currentVersion);
+          final hasValidModelSet = _hasValidModelSet(models);
 
-          final hasUpdate =
-              appCompatible &&
-              _isVersionNewer(remoteVer, currentVersion) &&
-              models.isNotEmpty &&
-              models.every(_isSafeModelEntry);
+          final hasUpdate = appCompatible && isNewer && hasValidModelSet;
+          final invalidNewerManifest =
+              appCompatible && isNewer && !hasValidModelSet;
 
           return ModelUpdateInfo(
-            version: remoteVer,
+            version: hasUpdate ? remoteVer : currentVersion,
             currentVersion: currentVersion,
             url: downloadUrl,
             sha256: sha256Hash,
@@ -206,7 +232,12 @@ class ModelUpdater {
             models: models,
             status: hasUpdate
                 ? UpdateStatus.updateAvailable
+                : invalidNewerManifest
+                ? UpdateStatus.error
                 : UpdateStatus.upToDate,
+            errorMessage: invalidNewerManifest
+                ? 'The newer model manifest must contain all six model and label files with valid URLs and SHA-256 checksums.'
+                : null,
           );
         }
       } catch (e) {
@@ -224,12 +255,13 @@ class ModelUpdater {
       final minApp = (data['min_app_version'] as String?) ?? '1.0.0';
       final notes = (data['notes'] as String?) ?? '';
       final models = _parseModelList(data, url, sha256Hash);
+      final isNewer = _isVersionNewer(manifestVersion, currentVersion);
+      final hasValidModelSet = _hasValidModelSet(models);
 
-      final hasUpdate =
-          !_isVersionNewer(minApp, currentAppVersion) &&
-          _isVersionNewer(manifestVersion, currentVersion) &&
-          models.isNotEmpty &&
-          models.every(_isSafeModelEntry);
+      final appCompatible = _isAppCompatible(data, minApp);
+      final hasUpdate = appCompatible && isNewer && hasValidModelSet;
+      final invalidNewerManifest =
+          appCompatible && isNewer && !hasValidModelSet;
 
       return ModelUpdateInfo(
         version: hasUpdate ? manifestVersion : currentVersion,
@@ -241,7 +273,12 @@ class ModelUpdater {
         models: models,
         status: hasUpdate
             ? UpdateStatus.updateAvailable
+            : invalidNewerManifest
+            ? UpdateStatus.error
             : UpdateStatus.upToDate,
+        errorMessage: invalidNewerManifest
+            ? 'The newer model manifest must contain all six model and label files with valid URLs and SHA-256 checksums.'
+            : null,
       );
     } catch (e) {
       return ModelUpdateInfo(
@@ -270,22 +307,21 @@ class ModelUpdater {
                 ]
               : <ModelFileEntry>[]);
 
-    if (targetFiles.isEmpty ||
-        targetFiles.any((entry) => !_isSafeModelEntry(entry)) ||
-        targetFiles.map((entry) => entry.name).toSet().length !=
-            targetFiles.length) {
+    if (!_hasValidModelSet(targetFiles)) {
       yield info.copyWith(
         status: UpdateStatus.error,
-        errorMessage: 'The model update manifest is invalid or incomplete.',
+        errorMessage:
+            'The model update must contain all six model and label files with valid URLs and SHA-256 checksums.',
       );
       return;
     }
 
     yield info.copyWith(status: UpdateStatus.downloading, progress: 0.0);
 
+    Directory? modelsDir;
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      final modelsDir = Directory(p.join(appDir.path, 'models'));
+      modelsDir = Directory(p.join(appDir.path, 'models'));
       if (!await modelsDir.exists()) {
         await modelsDir.create(recursive: true);
       }
@@ -316,9 +352,10 @@ class ModelUpdater {
                   }
                 },
               )
-              .then((_) => progressController.close())
-              .catchError((err) {
-                progressController.addError(err);
+              .then<void>((_) => progressController.close())
+              .catchError((Object error, StackTrace stackTrace) {
+                progressController.addError(error, stackTrace);
+                return progressController.close();
               }),
         );
 
@@ -393,7 +430,34 @@ class ModelUpdater {
         status: UpdateStatus.error,
         errorMessage: 'Update failed: $e',
       );
+    } finally {
+      if (modelsDir != null) {
+        for (final entry in targetFiles) {
+          final tempFile = File(
+            p.join(modelsDir.path, '.${entry.name}.download'),
+          );
+          try {
+            if (await tempFile.exists()) await tempFile.delete();
+          } catch (error) {
+            debugPrint(
+              '[ModelUpdater] Could not remove temporary ${entry.name}: $error',
+            );
+          }
+        }
+      }
     }
+  }
+
+  bool _hasValidModelSet(List<ModelFileEntry> files) {
+    if (files.length != _requiredModelFiles.length ||
+        files.map((entry) => entry.name).toSet().length != files.length ||
+        !files
+            .map((entry) => entry.name)
+            .toSet()
+            .containsAll(_requiredModelFiles)) {
+      return false;
+    }
+    return files.every(_isSafeModelEntry);
   }
 
   bool _isVersionNewer(String remote, String current) {

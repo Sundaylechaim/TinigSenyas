@@ -8,18 +8,24 @@ class CameraService {
   CameraDescription? _selectedCamera;
   List<CameraDescription> _cameras = [];
   StreamController<CameraImage>? _frameController;
+  Future<void>? _disposing;
   bool _isSwitching = false;
 
   CameraController? get controller => _controller;
   bool get isInitialized => _controller?.value.isInitialized ?? false;
   CameraDescription? get selectedCamera => _selectedCamera;
-  List<CameraDescription> get availableCamerasList => List.unmodifiable(_cameras);
+  List<CameraDescription> get availableCamerasList =>
+      List.unmodifiable(_cameras);
   bool get canSwitchCamera => _cameras.length > 1 && !_isSwitching;
-  Stream<CameraImage> get frameStream => _frameController?.stream ?? const Stream.empty();
+  Stream<CameraImage> get frameStream =>
+      _frameController?.stream ?? const Stream.empty();
 
   /// Checks whether camera permission has been granted without automatically prompting.
   Future<bool> hasCameraPermission() async {
-    if (kIsWeb) return true; // Web browsers prompt upon getUserMedia / availableCameras
+    if (kIsWeb) {
+      // Web browsers prompt on getUserMedia / availableCameras.
+      return true;
+    }
     final status = await Permission.camera.status;
     return status.isGranted;
   }
@@ -52,6 +58,8 @@ class CameraService {
     CameraLensDirection preferredDirection = CameraLensDirection.front,
     CameraDescription? specificCamera,
   }) async {
+    final pendingDisposal = _disposing;
+    if (pendingDisposal != null) await pendingDisposal;
     final targetDirection = direction ?? preferredDirection;
 
     // 1. Ensure permission is granted before accessing hardware
@@ -77,7 +85,8 @@ class CameraService {
       _cameras = await availableCameras();
     } catch (e) {
       final err = e.toString();
-      if (err.contains('cameraNotReadable') || err.contains('NotReadableError')) {
+      if (err.contains('cameraNotReadable') ||
+          err.contains('NotReadableError')) {
         throw CameraInUseException(
           'The webcam is in use by another program (such as Zoom, Teams, Discord, another browser tab, or background script) or blocked by Windows settings.',
         );
@@ -116,23 +125,30 @@ class CameraService {
         return;
       } catch (e) {
         lastError = e;
-        debugPrint('Camera init failed for "${cam.name}", trying next camera: $e');
+        debugPrint(
+          'Camera init failed for "${cam.name}", trying next camera: $e',
+        );
       }
     }
 
     final errStr = lastError.toString();
-    if (errStr.contains('cameraNotReadable') || errStr.contains('NotReadableError') || errStr.contains('hardware error')) {
+    if (errStr.contains('cameraNotReadable') ||
+        errStr.contains('NotReadableError') ||
+        errStr.contains('hardware error')) {
       throw CameraInUseException(
         'The webcam is in use by another program (such as Zoom, Teams, Discord, another browser tab, or background script) or blocked by Windows settings.',
       );
     }
-    if (errStr.contains('permission') || errStr.contains('CameraAccessDenied')) {
+    if (errStr.contains('permission') ||
+        errStr.contains('CameraAccessDenied')) {
       throw CameraPermissionDeniedException(
         'Camera permission was denied. Please allow camera access in Settings.',
       );
     }
     final sanitized = _sanitizeErrorMessage(lastError);
-    throw CameraException('Could not initialize any connected camera: $sanitized');
+    throw CameraException(
+      'Could not initialize any connected camera: $sanitized',
+    );
   }
 
   static String _sanitizeErrorMessage(Object? error) {
@@ -143,7 +159,9 @@ class CameraService {
         str.contains('IllegalStateException')) {
       return 'The camera preview was busy or interrupted during setup. Please tap "Retry Camera".';
     }
-    if (str.contains('cameraNotReadable') || str.contains('NotReadableError') || str.contains('hardware error')) {
+    if (str.contains('cameraNotReadable') ||
+        str.contains('NotReadableError') ||
+        str.contains('hardware error')) {
       return 'The camera is currently locked by another application.';
     }
     return str
@@ -154,7 +172,9 @@ class CameraService {
         .trim();
   }
 
-  Future<void> _initializeControllerWithFallback(CameraDescription camera) async {
+  Future<void> _initializeControllerWithFallback(
+    CameraDescription camera,
+  ) async {
     try {
       await _controller?.dispose();
     } catch (_) {}
@@ -190,7 +210,9 @@ class CameraService {
           return;
         } catch (e) {
           lastError = e;
-          debugPrint('Camera init fallback (Camera: ${camera.name}, Resolution: $resolution, Format: $format): $e');
+          debugPrint(
+            'Camera init fallback (Camera: ${camera.name}, Resolution: $resolution, Format: $format): $e',
+          );
           try {
             await controller?.dispose();
           } catch (_) {}
@@ -201,19 +223,22 @@ class CameraService {
     }
 
     final sanitized = _sanitizeErrorMessage(lastError);
-    throw CameraException('Could not initialize camera "${camera.name}": $sanitized');
+    throw CameraException(
+      'Could not initialize camera "${camera.name}": $sanitized',
+    );
   }
 
   void _startFrameStream() {
     _frameController?.close();
-    _frameController = StreamController<CameraImage>.broadcast();
+    final frameController = StreamController<CameraImage>.broadcast();
+    _frameController = frameController;
 
     if (_controller == null || !_controller!.value.isInitialized) return;
 
     try {
       _controller!.startImageStream((CameraImage image) {
-        if (!_frameController!.isClosed) {
-          _frameController!.add(image);
+        if (!frameController.isClosed) {
+          frameController.add(image);
         }
       });
     } catch (e) {
@@ -241,6 +266,8 @@ class CameraService {
   /// Selects a specific camera from the available camera list
   Future<void> selectCamera(CameraDescription camera) async {
     if (!_cameras.contains(camera)) return;
+    final pendingDisposal = _disposing;
+    if (pendingDisposal != null) await pendingDisposal;
 
     try {
       if (_controller != null && _controller!.value.isStreamingImages) {
@@ -259,23 +286,44 @@ class CameraService {
       CameraLensDirection.back => 'Back Camera',
       CameraLensDirection.external => 'External / USB Webcam',
     };
-    return camera.name.isNotEmpty ? '$direction (${camera.name})' : '$direction #$index';
+    return camera.name.isNotEmpty
+        ? '$direction (${camera.name})'
+        : '$direction #$index';
   }
 
-  void dispose() {
-    try {
-      if (_controller != null && _controller!.value.isStreamingImages) {
-        _controller!.stopImageStream().catchError((_) {});
-      }
-    } catch (_) {}
+  Future<void> dispose() {
+    final pendingDisposal = _disposing;
+    if (pendingDisposal != null) return pendingDisposal;
 
-    _frameController?.close();
-    try {
-      _controller?.dispose();
-    } catch (_) {}
+    final disposal = _disposeResources();
+    _disposing = disposal;
+    return disposal.whenComplete(() {
+      if (identical(_disposing, disposal)) _disposing = null;
+    });
+  }
+
+  Future<void> _disposeResources() async {
+    final controller = _controller;
+    final frameController = _frameController;
     _controller = null;
     _frameController = null;
     _isSwitching = false;
+
+    if (frameController != null && !frameController.isClosed) {
+      try {
+        await frameController.close();
+      } catch (_) {}
+    }
+    if (controller == null) return;
+
+    try {
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+    } catch (_) {}
+    try {
+      await controller.dispose();
+    } catch (_) {}
   }
 }
 

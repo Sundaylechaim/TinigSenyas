@@ -134,11 +134,16 @@ class SettingsService extends ChangeNotifier {
           // Cleartext http is only sane against the developer's own machine; anything
           // further away would leak the bearer token and the transcribed dialogue.
           (parsedUrl.scheme == 'http' &&
-              !const {'localhost', '127.0.0.1', '::1'}.contains(parsedUrl.host))) {
+              !const {
+                'localhost',
+                '127.0.0.1',
+                '::1',
+                '10.0.2.2',
+              }.contains(parsedUrl.host))) {
         throw ArgumentError.value(
           url,
           'url',
-          'Enter a valid HTTPS server URL (plain http is only allowed for localhost).',
+          'Enter a valid HTTPS server URL (plain http is only allowed for loopback or the Android emulator host).',
         );
       }
     }
@@ -262,4 +267,3 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 }
-

@@ -35,7 +35,8 @@ Once the backend is running, open your browser to view the interactive documenta
 ### 3. Over-The-Air (OTA) Updates (Chapter 3 Specification)
 * `GET /api/v1/ota/manifest`: Returns model versioning, SHA-256 integrity hash, and download URL for the quantized ST-GCN mobile package.
 * `GET /api/v1/ota/vocabulary`: Asynchronously synchronizes validated FSL transactional phrases directly into the mobile SQLite database without disrupting offline translation.
-* Model version `1.2.2` uses the connected pose-and-hand ST-GCN candidate. It showed a modest gain on a sample-level split, so validate it with Deaf FSL users before relying on its phrase results.
+* Recognition model bundle `1.3.0` contains the conversation, alphabet, and medical models with their matching labels. The app release baseline is `1.0.0+2019`; model versions remain independent so existing clients can compare OTA updates safely. These are pilot candidates and still need signer-independent evaluation with Deaf FSL users.
+* Runtime inference reads those models and UTF-8 label files from the canonical `frontend/assets/model` bundle. MediaPipe detector task files remain in `backend/models`. When deploying the backend separately from the repository root, set `FSL_MODEL_DIR` to a copy of the same model bundle; otherwise the backend fails clearly when its required assets are missing.
 
 ### 4. Alpha Camera Tracking Stream
 * `GET /video_feed`: Streams webcam frames with real-time MediaPipe skeletal landmark overlays for alpha testing.
@@ -54,9 +55,13 @@ the API, but the defaults are for single-machine development only.
 | `TTS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins allowed to call TTS when no token is configured. Applies to browsers only. |
 | `APP_ALLOWED_ORIGINS` | *(empty)* | Comma-separated origins added to the API's CORS allow-list. localhost is always permitted; a hosted frontend **must** be listed here or its preflight requests are blocked. |
 | `ADMIN_API_TOKEN` | *(unset)* | Bearer token for `POST /api/v1/dmca/takedown` and `/api/v1/dmca/ban_user`. When unset those endpoints answer 503 rather than accepting anonymous content removal. |
-| `OTA_MODEL_URL` | this repo's `releases/latest/download/fsl_model.tflite` | Where installed apps download a newer model. |
+| `OTA_ASSET_BASE_URL` | this repo's `main/frontend/assets/model` raw-content URL | Base URL for all model and label assets. |
+| `OTA_MODEL_URL` | raw-content URL for `fsl_model.tflite` | Where installed apps download the conversation model. |
 | `OTA_MODEL_SHA256` | hash of the bundled `fsl_model.tflite` | Integrity check the app verifies before installing. Must be regenerated (`sha256sum`) whenever the model changes. |
-| `OTA_MODEL_VERSION` | `1.2.2` | Only offer an update when this is newer than the version stored on the device. |
+| `OTA_MODEL_VERSION` | `1.3.0` | Only offer a model update when this is newer than the installed model version. |
+| `OTA_MIN_APP_VERSION` | `1.2.16` | Legacy version floor understood by already-installed app builds. |
+| `OTA_MIN_APP_BUILD` | `2019` | Minimum build number for the v1.0.0 app contract. |
+| `FSL_MODEL_DIR` | `../frontend/assets/model` | Directory containing the canonical phrase, alphabet, and medical TFLite models and matching UTF-8 labels. |
 | `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` | *(unset)* | Enables the Azure Cognitive Services fallback; without both, Edge-TTS is used. |
 | `APP_BASE_URL` / `PHYSICAL_POSTAL_ADDRESS` | `https://tinigsenyas.org` | CAN-SPAM footer values in `email_service.py`. |
 

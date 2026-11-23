@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
 import 'package:tinigsenyas/models/sign_result.dart';
@@ -37,7 +38,7 @@ class TfliteRecognitionService implements RecognitionService {
   List<String> _medicalLabels = [];
   List<String> _alphabetLabels = [];
   static const int _conversationalClassCount = 103;
-  static const int _medicalClassCount = 25;
+  static const int _medicalClassCount = 35;
   static const int _alphabetClassCount = 28;
 
   RecognitionMode _mode = RecognitionMode.auto;
@@ -163,6 +164,46 @@ class TfliteRecognitionService implements RecognitionService {
         actual.length,
         (index) => actual[index] == expected[index],
       ).every((matches) => matches);
+
+  Future<bool> _canUseLocalModelOverrides(Directory? modelsDir) async {
+    if (modelsDir == null) return false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final installedVersion = prefs.getString('model_version');
+      if (installedVersion == null || installedVersion.trim().isEmpty) {
+        return false;
+      }
+
+      final bundledVersion = (await rootBundle.loadString(
+        'assets/model/version.txt',
+      )).trim();
+      final bundledParts = bundledVersion
+          .replaceAll(RegExp(r'[^0-9.]'), '')
+          .split('.')
+          .map((part) => int.tryParse(part) ?? 0)
+          .toList();
+      final installedParts = installedVersion
+          .replaceAll(RegExp(r'[^0-9.]'), '')
+          .split('.')
+          .map((part) => int.tryParse(part) ?? 0)
+          .toList();
+
+      for (var index = 0; index < 3; index++) {
+        final bundled = index < bundledParts.length ? bundledParts[index] : 0;
+        final installed = index < installedParts.length
+            ? installedParts[index]
+            : 0;
+        if (bundled > installed) return false;
+        if (bundled < installed) return true;
+      }
+      return true;
+    } catch (error) {
+      debugPrint(
+        '[TfliteRecognitionService] Could not verify local model version: $error',
+      );
+      return false;
+    }
+  }
 
   Future<List<String>> _loadLabels({
     required File? localFile,
@@ -327,11 +368,18 @@ class TfliteRecognitionService implements RecognitionService {
         final appDir = await getApplicationDocumentsDirectory();
         modelsDir = Directory(p.join(appDir.path, 'models'));
       }
+      final useLocalOverrides = await _canUseLocalModelOverrides(modelsDir);
+      if (modelsDir != null && !useLocalOverrides) {
+        debugPrint(
+          '[TfliteRecognitionService] Ignoring local model overrides because '
+          'they do not have a version at least as new as the bundled models.',
+        );
+      }
 
       // Each model is loaded and shape-checked independently. If an OTA model
       // is incompatible, fall back to the bundled model instead of silently
       // leaving a selected recognition mode disconnected.
-      final localLabelsFile = modelsDir != null
+      final localLabelsFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'labels.txt'))
           : null;
       _fslLabels = await _loadLabels(
@@ -341,7 +389,7 @@ class TfliteRecognitionService implements RecognitionService {
         modelName: 'conversational',
       );
 
-      final localMedLabelsFile = modelsDir != null
+      final localMedLabelsFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'medical_labels.txt'))
           : null;
       _medicalLabels = await _loadLabels(
@@ -351,7 +399,7 @@ class TfliteRecognitionService implements RecognitionService {
         modelName: 'medical',
       );
 
-      final localAlphabetLabelsFile = modelsDir != null
+      final localAlphabetLabelsFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'alphabet_labels.txt'))
           : null;
       _alphabetLabels = await _loadLabels(
@@ -363,7 +411,7 @@ class TfliteRecognitionService implements RecognitionService {
 
       _alphabetInterpreter?.close();
       _alphabetInterpreter = null;
-      final localAlphaFile = modelsDir != null
+      final localAlphaFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'fsl_alphabet.tflite'))
           : null;
       _alphabetInterpreter = await _loadValidatedInterpreter(
@@ -377,7 +425,7 @@ class TfliteRecognitionService implements RecognitionService {
 
       _fslModelInterpreter?.close();
       _fslModelInterpreter = null;
-      final localModelFile = modelsDir != null
+      final localModelFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'fsl_model.tflite'))
           : null;
       _fslModelInterpreter = await _loadValidatedInterpreter(
@@ -391,7 +439,7 @@ class TfliteRecognitionService implements RecognitionService {
 
       _medicalModelInterpreter?.close();
       _medicalModelInterpreter = null;
-      final localMedModelFile = modelsDir != null
+      final localMedModelFile = useLocalOverrides && modelsDir != null
           ? File(p.join(modelsDir.path, 'fsl_medical.tflite'))
           : null;
       _medicalModelInterpreter = await _loadValidatedInterpreter(

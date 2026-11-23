@@ -30,7 +30,7 @@ GitHub Actions (macos-latest cloud runner)
 ### Method A: By pushing a Git Tag (Recommended)
 Every time you tag your code with `v*` (e.g., `v1.0.0`), GitHub Actions will automatically start a macOS runner, build the `.ipa`, and upload it to GitHub Releases.
 
-1. In `frontend/pubspec.yaml`, make sure your version is incremented (e.g. `version: 1.0.0+1`).
+1. In `frontend/pubspec.yaml`, keep the public version at `1.0.0` and increase the build number for each binary release (current baseline: `version: 1.0.0+2019`).
 2. Run in terminal (from the repo root `TinigSenyas`):
    ```bash
    git add -A

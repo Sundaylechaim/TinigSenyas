@@ -6,7 +6,7 @@ on:
       release_version:
         description: Exact Shorebird release installed by users
         required: true
-        default: 1.2.15+2017
+        default: 1.0.0+2019
         type: string
       track:
         description: Shorebird delivery track

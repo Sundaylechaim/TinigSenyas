@@ -36,7 +36,16 @@ class WordPredictionService {
     'Kayumanggi', 'Lila', 'Rosas', 'Kulay Rosas', 'Kahel', 'Abo',
 
     // Numbers & Quantities
-    'Isa', 'Dalawa', 'Tatlo', 'Apat', 'Lima', 'Anim', 'Pito', 'Walo', 'Siyam', 'Sampu',
+    'Isa',
+    'Dalawa',
+    'Tatlo',
+    'Apat',
+    'Lima',
+    'Anim',
+    'Pito',
+    'Walo',
+    'Siyam',
+    'Sampu',
     'Marami', 'Konti', 'Lahat', 'Wala',
 
     // Food & Dining
@@ -46,13 +55,25 @@ class WordPredictionService {
     // Common Verbs & Adjectives
     'Gusto', 'Ayaw', 'Kailangan', 'Tulong', 'Punta', 'Alis', 'Uwi', 'Bili',
     'Mabagal', 'Mabilis', 'Madilim', 'Maliwanag', 'Mainit', 'Malamig',
-    'Masaya', 'Malungkot', 'Maganda', 'Pogi', 'Mahal', 'Mura'
+    'Masaya', 'Malungkot', 'Maganda', 'Pogi', 'Mahal', 'Mura',
   ];
 
   final List<String> _dictionary;
 
   WordPredictionService({List<String>? customDictionary})
-      : _dictionary = customDictionary ?? defaultDictionary;
+    : _dictionary = List.of(customDictionary ?? defaultDictionary);
+
+  /// Adds server vocabulary to the built-in offline dictionary without
+  /// replacing any entries or introducing case-insensitive duplicates.
+  void addVocabulary(Iterable<String> words) {
+    final known = _dictionary.map((word) => word.trim().toLowerCase()).toSet();
+    for (final word in words) {
+      final cleaned = word.trim();
+      if (cleaned.isNotEmpty && known.add(cleaned.toLowerCase())) {
+        _dictionary.add(cleaned);
+      }
+    }
+  }
 
   /// Returns auto-complete and predictive candidate words for the current letter prefix.
   List<String> getPredictions(String prefix, {int maxResults = 4}) {
@@ -69,7 +90,12 @@ class WordPredictionService {
         exactMatches.add(word);
       } else if (wLower.startsWith(clean)) {
         prefixMatches.add(word);
-      } else if (clean.length >= 3 && _levenshteinDistance(clean, wLower.substring(0, min(clean.length, wLower.length))) <= 1) {
+      } else if (clean.length >= 3 &&
+          _levenshteinDistance(
+                clean,
+                wLower.substring(0, min(clean.length, wLower.length)),
+              ) <=
+              1) {
         fuzzyMatches.add(word);
       }
     }
@@ -108,4 +134,3 @@ class WordPredictionService {
     return v1[s2.length];
   }
 }
-

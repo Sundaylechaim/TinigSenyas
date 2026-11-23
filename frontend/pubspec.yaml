@@ -2,7 +2,7 @@ name: tinigsenyas
 description: "A Filipino Sign Language Translator Application made for the KAINAKAP organization members."
 publish_to: 'none'
 
-version: 1.2.15+2017
+version: 1.0.0+2019
 
 environment:
   sdk: ^3.12.2

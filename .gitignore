@@ -23,6 +23,7 @@ backend/email_suppression_list.json
 # Python Virtual Environments & Caches
 **/.venv/
 **/venv/
+**/.training-venv/
 **/__pycache__/
 **/*.pyc
 **/.pytest_cache/
@@ -34,6 +35,10 @@ backend/email_suppression_list.json
 **/.flutter-plugins-dependencies
 **/.pub-cache/
 **/.pub/
+
+# Generated video landmark features and per-clip audit manifest
+/backend/processed_6199/
+/backend/models/6199_candidate/
 
 # Mobile Signing Keys & Provisioning
 android/app/*.jks

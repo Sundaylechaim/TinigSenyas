@@ -1,39 +1,40 @@
 {
-  "version": "1.2.2",
-  "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/v1.2.12/frontend/assets/model/fsl_model.tflite",
-  "sha256": "4f5b8def4902dc79846420396285ca9c04078ea76ebd105b5247dc7f19a388e2",
-  "min_app_version": "1.0.0",
-  "notes": "Connected pose and hand ST-GCN. Internal sample-level results improved slightly; signer-independent Deaf-user validation is still needed.",
+  "version": "1.3.0",
+  "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
+  "sha256": "f7b7a93af2062d5547593c4c801755fd632c4888f53e82a41568a1c94ffd975f",
+  "min_app_version": "1.2.16",
+  "min_app_build": 2019,
+  "notes": "6199 archive candidate model bundle for local pilot testing. Signer-independent validation with Deaf FSL users is still required.",
   "models": [
     {
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_alphabet.tflite",
       "name": "fsl_alphabet.tflite",
-      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/v1.2.12/frontend/assets/model/fsl_alphabet.tflite",
-      "sha256": "33e45a06f2a133969d50554211e280ddf040825478e6e748e4d63b7ec2de4b97"
+      "sha256": "1231efe25942a498fe5a97c38ee3b4a6f835d2584dc3009add143d0b03330d41"
     },
     {
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
       "name": "fsl_model.tflite",
-      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/v1.2.12/frontend/assets/model/fsl_model.tflite",
-      "sha256": "4f5b8def4902dc79846420396285ca9c04078ea76ebd105b5247dc7f19a388e2"
+      "sha256": "f7b7a93af2062d5547593c4c801755fd632c4888f53e82a41568a1c94ffd975f"
     },
     {
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_medical.tflite",
       "name": "fsl_medical.tflite",
-      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/v1.2.12/frontend/assets/model/fsl_medical.tflite",
-      "sha256": "b0825c8fb7cc35fae8171ea5532fc75b247bb9cc1b62afd1fa4fbfb25cd4ab20"
+      "sha256": "7964746f3b3cd717c1361d7a97f756e5577f834eebbdf9e601055b2c86d006e9"
     },
     {
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/labels.txt",
       "name": "labels.txt",
-      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/v1.2.12/frontend/assets/model/labels.txt",
-      "sha256": "e79197e67f9491d5b13bb0211104e277f38ca67b15600d9ac9365e68fa7d8c7e"
+      "sha256": "866cbc2ca625cddde62744689e8780694ca3af8d165a5cc3e9092da1f4a84bcb"
     },
     {
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/medical_labels.txt",
       "name": "medical_labels.txt",
-      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/v1.2.12/frontend/assets/model/medical_labels.txt",
-      "sha256": "9b769b64f890dd31a4350d98bfa89f0c8f66d85239a9f1ef70b627fd7a40e1b7"
+      "sha256": "853eb0371cf7bedff6f2e292c791c78173874703284002cabf991b1084772c1d"
     },
     {
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/alphabet_labels.txt",
       "name": "alphabet_labels.txt",
-      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/v1.2.12/frontend/assets/model/alphabet_labels.txt",
-      "sha256": "a24afda814103bd4bece254505c63233fad8b7594a46edc5777f32c193409e5b"
+      "sha256": "6e0c47a0065919a1ca327414c577e9ed6888ab292ddabed5402a04445136544f"
     }
   ]
 }

@@ -1,5 +1,8 @@
+import hashlib
+import json
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -14,8 +17,40 @@ class ServerEndpointTests(unittest.TestCase):
         response = self.client.get("/api/v1/ota/manifest")
         self.assertEqual(response.status_code, 200)
         data = response.json()
+        app_model_dir = (
+            Path(__file__).resolve().parents[1]
+            / "frontend"
+            / "assets"
+            / "model"
+        )
+        local_manifest = json.loads(
+            (app_model_dir / "manifest.json").read_text(encoding="utf-8")
+        )
         self.assertIn("version", data)
         self.assertIn("url", data)
+        self.assertEqual(data["version"], local_manifest["version"])
+        self.assertEqual(data["min_app_version"], "1.2.16")
+        self.assertEqual(data["min_app_build"], local_manifest["min_app_build"])
+        self.assertEqual(
+            {model["name"] for model in data["models"]},
+            {
+                "fsl_model.tflite",
+                "fsl_alphabet.tflite",
+                "fsl_medical.tflite",
+                "labels.txt",
+                "medical_labels.txt",
+                "alphabet_labels.txt",
+            },
+        )
+        local_checksums = {
+            model["name"]: model["sha256"] for model in local_manifest["models"]
+        }
+        for model in data["models"]:
+            self.assertRegex(model["sha256"], r"^[a-f0-9]{64}$")
+            asset_path = app_model_dir / model["name"]
+            actual_checksum = hashlib.sha256(asset_path.read_bytes()).hexdigest()
+            self.assertEqual(model["sha256"], local_checksums[model["name"]])
+            self.assertEqual(model["sha256"], actual_checksum)
 
     def test_ota_vocabulary(self):
         response = self.client.get("/api/v1/ota/vocabulary")
@@ -40,7 +75,15 @@ class ServerEndpointTests(unittest.TestCase):
         self.assertIn("zones_covered", data)
 
     def test_can_spam_unsubscribe(self):
-        response = self.client.get("/api/v1/unsubscribe?email=test_user@example.com")
+        from email_service import suppression_manager
+
+        with (
+            patch.object(suppression_manager, "_suppressed", set()),
+            patch.object(suppression_manager, "_save"),
+        ):
+            response = self.client.get(
+                "/api/v1/unsubscribe?email=test_user@example.com"
+            )
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["status"], "success")

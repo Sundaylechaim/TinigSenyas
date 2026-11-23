@@ -4,6 +4,15 @@ import 'package:tinigsenyas/services/camera_service.dart';
 
 void main() {
   group('CameraService display names and error classes', () {
+    test('disposing before initialization is safe and idempotent', () async {
+      final service = CameraService();
+
+      await Future.wait([service.dispose(), service.dispose()]);
+
+      expect(service.isInitialized, isFalse);
+      expect(service.selectedCamera, isNull);
+    });
+
     test('formats front camera name cleanly', () {
       const frontCam = CameraDescription(
         name: '0',
@@ -38,12 +47,15 @@ void main() {
     });
 
     test('custom camera exception types maintain messages', () {
-      final permDenied = CameraPermissionDeniedException('Permission was denied');
+      final permDenied = CameraPermissionDeniedException(
+        'Permission was denied',
+      );
       expect(permDenied.message, 'Permission was denied');
       expect(permDenied.toString(), 'Permission was denied');
 
-      final permBlocked =
-          CameraPermissionPermanentlyDeniedException('Permanently blocked');
+      final permBlocked = CameraPermissionPermanentlyDeniedException(
+        'Permanently blocked',
+      );
       expect(permBlocked.message, 'Permanently blocked');
 
       final noCam = NoCameraAvailableException('No camera found');
@@ -54,4 +66,3 @@ void main() {
     });
   });
 }
-
