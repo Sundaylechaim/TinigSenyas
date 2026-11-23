@@ -24,17 +24,17 @@
     {
       "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/labels.txt",
       "name": "labels.txt",
-      "sha256": "866cbc2ca625cddde62744689e8780694ca3af8d165a5cc3e9092da1f4a84bcb"
+      "sha256": "e79197e67f9491d5b13bb0211104e277f38ca67b15600d9ac9365e68fa7d8c7e"
     },
     {
       "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/medical_labels.txt",
       "name": "medical_labels.txt",
-      "sha256": "853eb0371cf7bedff6f2e292c791c78173874703284002cabf991b1084772c1d"
+      "sha256": "f74b6b23f94f05ab27580b121f40ece754dcb63468790c7f40fa59af83faee06"
     },
     {
       "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/alphabet_labels.txt",
       "name": "alphabet_labels.txt",
-      "sha256": "6e0c47a0065919a1ca327414c577e9ed6888ab292ddabed5402a04445136544f"
+      "sha256": "a24afda814103bd4bece254505c63233fad8b7594a46edc5777f32c193409e5b"
     }
   ]
 }
