@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import '../services/tts_service.dart';
 import '../services/database_helper.dart';
 import '../services/speech_transcript_session.dart';
+import '../services/speech_locale_selector.dart';
 import '../widgets/connectivity_badge.dart';
 import '../services/settings_service.dart';
 import 'text_to_sign_screen.dart';
@@ -30,6 +32,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   String? _speechError;
   bool _isStarting = false;
   bool _isStopping = false;
+  bool _isInitializingSpeech = false;
+  String? _offlineFilipinoLocale;
   int _activeSessionId = 0;
 
   @override
@@ -39,22 +43,58 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   }
 
   Future<void> _initSpeech() async {
+    if (_isInitializingSpeech) return;
+    if (mounted) setState(() => _isInitializingSpeech = true);
     try {
       final available = await _speech.initialize(
         onStatus: _onSpeechStatus,
         onError: _onSpeechError,
       );
+      if (!mounted) return;
+      if (!available) {
+        setState(() {
+          _speechAvailable = false;
+          _offlineFilipinoLocale = null;
+          _speechError = 'Speech recognition is not available on this device.';
+        });
+        return;
+      }
+
+      // Browser recognition is kept as a demo fallback. On mobile, only
+      // enable transcription when the platform reports a Filipino locale for
+      // its on-device recognizer.
+      if (kIsWeb) {
+        setState(() {
+          _speechAvailable = true;
+          _offlineFilipinoLocale = null;
+          _speechError = null;
+        });
+        return;
+      }
+
+      final locales = await _speech.locales();
+      final locale = selectOfflineFilipinoLocale(
+        locales.map((supported) => supported.localeId),
+      );
+      setState(() {
+        _offlineFilipinoLocale = locale;
+        _speechAvailable = locale != null;
+        _speechError = locale == null
+            ? 'Offline Filipino speech is not available. Install Filipino or Tagalog offline speech data on this phone, then tap Retry.'
+            : null;
+      });
+    } catch (error) {
       if (mounted) {
         setState(() {
-          _speechAvailable = available;
-          if (!available) {
-            _speechError =
-                'Speech recognition is not available on this device.';
-          }
+          _speechAvailable = false;
+          _offlineFilipinoLocale = null;
+          _speechError = kIsWeb
+              ? error.toString()
+              : 'Could not check offline Filipino speech support. Check the phone speech service and retry.';
         });
       }
-    } catch (error) {
-      if (mounted) setState(() => _speechError = error.toString());
+    } finally {
+      if (mounted) setState(() => _isInitializingSpeech = false);
     }
   }
 
@@ -76,7 +116,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   void _onSpeechError(dynamic error) {
     if (!mounted) return;
     setState(() {
-      _speechError = error.toString();
+      _speechError = kIsWeb
+          ? error.toString()
+          : 'Offline Filipino transcription stopped. Check that Filipino or Tagalog offline speech data is installed, then try again.';
       _currentWords = '';
       _transcriptSession.cancel();
     });
@@ -154,6 +196,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
             listenMode: stt.ListenMode.dictation,
             pauseFor: const Duration(seconds: 3),
             cancelOnError: true,
+            localeId: _offlineFilipinoLocale,
+            onDevice: !kIsWeb,
           ),
           onResult: (result) {
             if (!mounted ||
@@ -428,7 +472,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                           ),
                           if (!_speechAvailable)
                             TextButton(
-                              onPressed: _initSpeech,
+                              onPressed: _isInitializingSpeech
+                                  ? null
+                                  : _initSpeech,
                               child: const Text('Retry'),
                             ),
                         ],
@@ -527,6 +573,24 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                   ),
 
                   const SizedBox(height: 16),
+
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      kIsWeb
+                          ? 'Browser speech recognition may require an internet connection.'
+                          : _offlineFilipinoLocale == null
+                          ? 'Filipino offline speech is not ready on this phone.'
+                          : 'On-device Filipino speech · $_offlineFilipinoLocale',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark
+                            ? const Color(0xFF94A3B8)
+                            : const Color(0xFF64748B),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
 
                   // Large Mobile Floating Action Button (Complementary Yellow)
                   SizedBox(

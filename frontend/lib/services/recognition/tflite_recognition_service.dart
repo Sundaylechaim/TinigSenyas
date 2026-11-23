@@ -1455,7 +1455,7 @@ class TfliteRecognitionService implements RecognitionService {
     }
   }
 
-  /// Evaluates 60-frame ST-GCN sequence using dedicated 25-class Medical FSL model
+  /// Evaluates 60-frame ST-GCN sequence using the dedicated 35-class Medical FSL model.
   void _evaluateMedicalSign() {
     if (_medicalModelInterpreter == null ||
         _medicalLabels.isEmpty ||

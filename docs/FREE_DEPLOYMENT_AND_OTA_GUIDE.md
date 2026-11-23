@@ -83,15 +83,17 @@ If testers require the native iOS app:
 
 ---
 
-## 3. Offline-First Architecture Guarantee
+## 3. Offline-First Behavior and Device Requirements
 
-TinigSenyas is architected to be **100% usable without internet**:
+Core camera recognition, text-to-sign previews, conversation history, and
+cached suggestions work without internet. Speech availability depends on the
+device's installed language packs and voice services:
 
 | Feature | Offline Mechanism | Online Enhancement |
 | :--- | :--- | :--- |
 | **Sign-to-Text** | On-device machine learning inference runs locally via camera stream. Zero server calls. | Can download new gesture weights over the air. |
-| **Speech-to-Text** | On-device speech recognition via OS speech packs. | Cloud-assisted transcription if connected. |
-| **Text-to-Speech** | Native device speech engine (`flutter_tts`). The Sherpa-ONNX English voice is **not** bundled - the tester downloads a 147 MB model once, on demand, and it then works offline. | High-definition cloud TTS server fallback. |
+| **Speech-to-Text** | On mobile, the app requests the OS on-device Filipino/Tagalog recognizer. A compatible offline speech pack must be installed. | The web demo uses browser speech recognition; network use depends on the browser. |
+| **Text-to-Speech** | Installed device voice. The optional Sherpa-ONNX English voice downloads on demand (about 147 MB) and then works offline. | Online Filipino TTS requires the configured backend and internet access. |
 | **History & Chats** | Local SQLite database (`DatabaseHelper`) stored inside the device's internal storage sandbox. | History CSV export. |
 | **Network State** | `ConnectivityService` detects disconnection immediately and prevents any freezing or unhandled network crashes. | `ConnectivityBadge` displays current status. |
 
@@ -119,7 +121,9 @@ checksums for every file. Before publishing a retrained bundle:
 The current app baseline checks `min_app_build=2019`. Older app builds may not
 accept this bundle; users should install the v1.0.0+2019 APK before testing this
 model set. Vocabulary sync is optional and keeps a last-known SQLite cache when
-the backend is unavailable.
+the backend is unavailable. Administrators publish a validated vocabulary
+snapshot using `PUT /api/v1/admin/vocabulary`; see `backend/README.md`. Configure
+the backend database on persistent storage if updates must survive redeploys.
 
 ### Layer 2: Dart app-code updates
 

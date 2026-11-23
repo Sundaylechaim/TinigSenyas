@@ -27,7 +27,9 @@ Flutter screens
   │                  └─ WordPredictionService: bundled lexicon + SQLite vocabulary cache
   │                       └─ VocabularySyncService ─ GET /api/v1/ota/vocabulary
   ├─ Text to Sign ─ bundled label list + sign animation catalog ─ TTS service
-  ├─ Speech to Text ─ device speech recognizer ─ conversation history / TTS
+  ├─ Speech to Text ─ mobile on-device Filipino recognizer (when OS pack exists)
+  │                    └─ browser demo uses browser speech recognition
+  ├─ TTS ─ installed device voice / online Filipino service / optional offline English pack
   └─ Settings ─ SettingsService ─ app/model status, backend URL, TTS preferences
 
 ModelUpdater ─ HTTPS manifest ─ checks version, app compatibility, file names,
@@ -36,6 +38,7 @@ ModelUpdater ─ HTTPS manifest ─ checks version, app compatibility, file name
 
 FastAPI (optional)
   ├─ /api/v1/ota/manifest and /api/v1/ota/vocabulary
+  ├─ PUT /api/v1/admin/vocabulary (ADMIN_API_TOKEN; atomic SQLite snapshot)
   ├─ /api/v1/predict/* -> SignClassifier -> canonical app model bundle + labels
   │                                  └─ MediaPipe detector tasks in backend/models
   ├─ /api/v1/hands/* for configured backend hand tracking
@@ -50,6 +53,10 @@ FastAPI (optional)
 - Vocabulary sync is optional. It uses the configured backend URL, runs
   asynchronously when Sign to Text opens, and never blocks camera recognition.
   Invalid or unavailable responses leave the existing cache intact.
+- Administrators publish a complete validated vocabulary snapshot with the
+  token-protected `PUT /api/v1/admin/vocabulary` endpoint. The backend writes a
+  SQLite transaction at `OTA_VOCABULARY_DB`; use persistent storage if updates
+  must survive service restarts or redeployments.
 - The app has no end-user account system. This is intentional for the offline
   pilot. Remote TTS requires the configured bearer token; DMCA administration
   requires `ADMIN_API_TOKEN`. Keep the optional camera/prediction backend on a
@@ -63,6 +70,9 @@ FastAPI (optional)
 
 ## Validation boundary
 
-The model bundle is a local pilot candidate. Sample-level validation results
-do not establish signer-independent or Deaf-user phrase accuracy. Treat model
-quality as a separate validation gate from app/API version compatibility.
+The model bundle is a local pilot candidate. It classifies one isolated sign
+per recognition window; it does not decode unrestricted continuous sentences.
+Sample-level validation results do not establish signer-independent or
+Deaf-user accuracy. Treat model quality as a separate validation gate from
+app/API version compatibility. Mobile offline transcription also requires an
+OS-provided Filipino speech model; the app does not bundle one.

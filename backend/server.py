@@ -1,6 +1,7 @@
 import hmac
 import logging
 import os
+import sqlite3
 import sys
 import warnings
 from pathlib import Path
@@ -27,12 +28,13 @@ import numpy as np
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional
 
 from tts_api import tts_api
 from hand_tracker import HandTracker, HandValidationResult
 from email_service import suppression_manager
+from vocabulary_store import VocabularyStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tinigsenyas.backend")
@@ -69,7 +71,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -99,12 +101,44 @@ app.include_router(tts_api)
 # ---------------------------------------------------------------------------
 
 class FSLVocabularyItem(BaseModel):
-    fsl_id: int
-    word: str
-    meaning: str
-    gesture_label: str
-    video_path: Optional[str] = None
-    created_at: Optional[str] = None
+    fsl_id: int = Field(gt=0, strict=True)
+    word: str = Field(min_length=1, max_length=120)
+    meaning: str = Field(min_length=1, max_length=500)
+    gesture_label: str = Field(min_length=1, max_length=120)
+    video_path: Optional[str] = Field(default=None, max_length=500)
+    created_at: Optional[str] = Field(default=None, max_length=80)
+
+    @field_validator("word", "meaning", "gesture_label")
+    @classmethod
+    def clean_required_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned or "\x00" in cleaned:
+            raise ValueError("must contain visible text")
+        return cleaned
+
+    @field_validator("video_path", "created_at")
+    @classmethod
+    def clean_optional_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned or "\x00" in cleaned:
+            return None
+        return cleaned
+
+
+class VocabularyUpdateRequest(BaseModel):
+    items: List[FSLVocabularyItem] = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def ensure_unique_items(self) -> "VocabularyUpdateRequest":
+        ids = [item.fsl_id for item in self.items]
+        words = [item.word.casefold() for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("fsl_id values must be unique")
+        if len(words) != len(set(words)):
+            raise ValueError("word values must be unique")
+        return self
 
 class ModelFileItem(BaseModel):
     name: str
@@ -243,7 +277,47 @@ async def get_vocabulary_sync():
     Asynchronous OTA dictionary synchronization endpoint.
     Updates the mobile client's localized SQLite database without disrupting core offline translation.
     """
-    return _DEFAULT_VOCABULARY
+    try:
+        stored = _vocabulary_store().list_entries()
+        if stored is None:
+            return _DEFAULT_VOCABULARY
+        return [FSLVocabularyItem.model_validate(item) for item in stored]
+    except (OSError, sqlite3.Error, ValueError) as error:
+        logger.exception("Unable to read the published vocabulary dataset: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail="The published vocabulary dataset is temporarily unavailable.",
+        ) from error
+
+
+def _vocabulary_store() -> VocabularyStore:
+    configured_path = os.environ.get("OTA_VOCABULARY_DB", "").strip()
+    database_path = (
+        Path(configured_path)
+        if configured_path
+        else Path(__file__).resolve().parent / "data" / "ota_vocabulary.sqlite3"
+    )
+    return VocabularyStore(database_path)
+
+
+@app.put("/api/v1/admin/vocabulary", tags=["OTA Administration"])
+async def replace_vocabulary_dataset(
+    payload: VocabularyUpdateRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """Publish a validated vocabulary snapshot for online OTA synchronization."""
+    _require_admin(authorization)
+    try:
+        count = _vocabulary_store().replace_entries(
+            [item.model_dump() for item in payload.items]
+        )
+    except (OSError, sqlite3.Error) as error:
+        logger.exception("Unable to persist the vocabulary dataset: %s", error)
+        raise HTTPException(
+            status_code=503,
+            detail="The vocabulary dataset could not be saved.",
+        ) from error
+    return {"status": "published", "count": count}
 
 # ---------------------------------------------------------------------------
 # CAN-SPAM Compliance Endpoint (15 U.S.C. § 7704)
@@ -310,7 +384,23 @@ async def process_dmca_takedown(
     logger.warning("Processing DMCA takedown notice for %s %s from %s", payload.item_type, payload.item_id, payload.complaining_party)
     global _DEFAULT_VOCABULARY
     if payload.item_type == "vocabulary":
-        _DEFAULT_VOCABULARY = [item for item in _DEFAULT_VOCABULARY if item.fsl_id != payload.item_id]
+        try:
+            store = _vocabulary_store()
+            stored = store.list_entries()
+            if stored is None:
+                _DEFAULT_VOCABULARY = [
+                    item
+                    for item in _DEFAULT_VOCABULARY
+                    if item.fsl_id != payload.item_id
+                ]
+            else:
+                store.remove_entry(payload.item_id)
+        except (OSError, sqlite3.Error) as error:
+            logger.exception("Unable to remove the vocabulary item: %s", error)
+            raise HTTPException(
+                status_code=503,
+                detail="The vocabulary item could not be removed.",
+            ) from error
     return {
         "status": "content_removed",
         "takedown_id": f"dmca-{payload.item_id}",

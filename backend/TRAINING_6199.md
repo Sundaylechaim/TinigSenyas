@@ -79,14 +79,15 @@ samples; the pilot bundle uses the 35-class candidate instead.
 
 ## Local pilot integration
 
-The candidate TFLite files and their matching label files are bundled under
-`frontend/assets/model/`. The app's medical output contract is set to 35
-classes. The bundled model version is `1.3.0`; the Android app version is
-`1.0.0+2019`. The local manifest lists all six model/label files and their
-SHA-256 checksums, so a later OTA can update the models and label orders as one
-verified set.
+The pilot TFLite files and matching label files are bundled under
+`frontend/assets/model/`. The Android app's medical output contract is set to
+35 classes. The app baseline is `1.0.0+2019`; its model bundle is `1.3.0`, and
+the manifest lists SHA-256 checksums for all six model/label files. That bundle
+is published in the GitHub `v1.0.0+2019` pilot release and is available to the
+app's OTA model updater.
 
-No OTA files have been published. The remote GitHub manifest must be updated
-with these exact files and hashes at the same time as a future authorized OTA
-release. Validate recognition with Deaf FSL users before treating these
-candidates as production-ready.
+Training scripts still produce local candidates and do not automatically
+replace or publish app assets. Each later candidate must be evaluated, copied
+with its matching label order, assigned a new model version, and published as
+one verified bundle. Validate recognition with signer-independent data and
+Deaf FSL users before treating any candidate as production-ready.

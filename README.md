@@ -17,12 +17,12 @@ Developed for the Capstone Project at Eulogio "Amang" Rodriguez Institute of Sci
 ---
 
 ## Key Features
-- **Sign-to-Text (ST-GCN):** Real-time spatial-temporal skeletal graph classification recognizing **103 conversational FSL classes**, **35 medical signs**, and a dedicated **28-class fingerspelling model** (A–Z, Ng, Ñ) using on-device TFLite models.
+- **Sign-to-Text (ST-GCN):** On-device TFLite models classify **103 conversational FSL classes**, **35 medical signs**, and **28 fingerspelling classes** (A–Z, Ng, Ñ). Phrase and medical modes recognize one isolated sign per window; they do not translate unrestricted continuous sentences.
 - **Dual-Hypothesis & Hand Mirroring:** Canonical hand mirroring across the wrist X-axis, enabling seamless recognition for both left-handed and right-handed signers.
 - **Dynamic Gated Buffering:** Ultra-fast 0.7-second windowing for static alphabet/number fingerspelling alongside 2.0-second motion gesture recognition.
-- **Speech-to-Text:** Live voice transcription rendered into interactive accessible chat dialogues.
-- **Auditory Synthesis (TTS):** High-fidelity Tagalog voice synthesis (`fil-PH-BlessicaNeural` / `fil-PH-AngeloNeural`).
-- **Over-The-Air (OTA) Model Sync:** Six model/label files update as one SHA-256-verified bundle; vocabulary sync is cached in SQLite and augments offline spelling suggestions.
+- **Speech-to-Text:** Mobile transcription requests the Filipino/Tagalog on-device recognizer and keeps audio on the phone; a compatible offline speech pack must be installed. Browser recognition may require internet.
+- **Auditory Synthesis (TTS):** Filipino speech uses an installed device voice or the configured online service. An optional downloadable Sherpa-ONNX pack provides offline English speech.
+- **Over-The-Air (OTA) Model Sync:** Six model/label files update as one SHA-256-verified bundle; administrator-published vocabulary sync is cached in SQLite and augments offline spelling suggestions.
 - **Local Database:** SQLite stores conversation history and the last valid vocabulary cache, so signing and suggestions remain available offline.
 - **Accessibility:** Built-in dark mode and adjustable typography scaling.
 
@@ -50,7 +50,7 @@ Configured in `pubspec.yaml`:
 - **`flutter`** (SDK Framework for Android, iOS, Windows - the web target does not compile; see Known Limitations)
 - **`camera`** (Live hardware camera feed)
 - **`sqflite`** (Local SQLite database storage)
-- **`speech_to_text`** (Browser-native & mobile speech transcription)
+- **`speech_to_text`** (mobile on-device recognition when a Filipino speech pack is installed; browser speech for demos)
 - **`dio`** (Asynchronous REST API client)
 
 ---
@@ -87,9 +87,15 @@ the API to anyone, and `APP_ALLOWED_ORIGINS` if a hosted frontend will call it.
 ## Core Module Map
 
 See [docs/ARCHITECTURE_V1.0.0.md](docs/ARCHITECTURE_V1.0.0.md) for the app/API/data
-flow, version policy, and authentication boundaries. The Flutter application is
-offline-first: camera recognition, text-to-sign previews, conversation history,
-and fallback suggestions do not require a backend account.
+flow, version policy, and authentication boundaries. The Flutter application
+keeps camera recognition, text-to-sign previews, conversation history, and
+fallback suggestions local. Mobile offline speech requires a compatible
+Filipino/Tagalog speech pack on the device; Filipino TTS depends on an installed
+device voice unless online TTS is configured.
+
+See [docs/SYSTEM_EVALUATION_PROTOCOL.md](docs/SYSTEM_EVALUATION_PROTOCOL.md) for
+the ISO/IEC 25010 technical test matrix and SUS procedure. It records which
+results still require target phones and Deaf FSL participants.
 
 ### 3. Run the Frontend App
 ```powershell

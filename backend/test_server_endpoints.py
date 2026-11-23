@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -58,6 +59,138 @@ class ServerEndpointTests(unittest.TestCase):
         data = response.json()
         self.assertIsInstance(data, list)
         self.assertGreater(len(data), 0)
+
+    def test_admin_vocabulary_requires_token_and_publishes_atomically(self):
+        payload = {
+            "items": [
+                {
+                    "fsl_id": 201,
+                    "word": "  Magandang umaga ",
+                    "meaning": "Pagbati sa umaga",
+                    "gesture_label": "magandang_umaga",
+                },
+                {
+                    "fsl_id": 202,
+                    "word": "  Kailangan ko ng tulong ",
+                    "meaning": "Humihingi ng tulong",
+                    "gesture_label": "kailangan_ko_ng_tulong",
+                },
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = str(Path(temp_dir) / "ota-vocabulary.sqlite3")
+            with patch.dict(
+                os.environ,
+                {
+                    "ADMIN_API_TOKEN": "test-admin-token",
+                    "OTA_VOCABULARY_DB": database_path,
+                },
+            ):
+                denied = self.client.put(
+                    "/api/v1/admin/vocabulary", json=payload
+                )
+                self.assertEqual(denied.status_code, 401)
+
+                published = self.client.put(
+                    "/api/v1/admin/vocabulary",
+                    json=payload,
+                    headers={"Authorization": "Bearer test-admin-token"},
+                )
+                self.assertEqual(published.status_code, 200)
+                self.assertEqual(
+                    published.json(), {"status": "published", "count": 2}
+                )
+
+                synchronized = self.client.get("/api/v1/ota/vocabulary")
+                self.assertEqual(synchronized.status_code, 200)
+                self.assertEqual(
+                    [item["word"] for item in synchronized.json()],
+                    ["Magandang umaga", "Kailangan ko ng tulong"],
+                )
+
+                persisted = self.client.get("/api/v1/ota/vocabulary")
+                self.assertEqual(
+                    [item["fsl_id"] for item in persisted.json()], [201, 202]
+                )
+
+                invalid = self.client.put(
+                    "/api/v1/admin/vocabulary",
+                    json={"items": []},
+                    headers={"Authorization": "Bearer test-admin-token"},
+                )
+                self.assertEqual(invalid.status_code, 422)
+                preserved = self.client.get("/api/v1/ota/vocabulary")
+                self.assertEqual(
+                    [item["fsl_id"] for item in preserved.json()], [201, 202]
+                )
+
+    def test_admin_vocabulary_rejects_duplicate_ids_and_words(self):
+        duplicate_ids = {
+            "items": [
+                {
+                    "fsl_id": 1,
+                    "word": "Salamat",
+                    "meaning": "Pasasalamat",
+                    "gesture_label": "salamat",
+                },
+                {
+                    "fsl_id": 1,
+                    "word": "Tulong",
+                    "meaning": "Humingi ng tulong",
+                    "gesture_label": "tulong",
+                },
+            ]
+        }
+        duplicate_words = {
+            "items": [
+                {
+                    "fsl_id": 1,
+                    "word": "Salamat",
+                    "meaning": "Pasasalamat",
+                    "gesture_label": "salamat",
+                },
+                {
+                    "fsl_id": 2,
+                    "word": " salamat ",
+                    "meaning": "Pagpapasalamat",
+                    "gesture_label": "salamat_2",
+                },
+            ]
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "ADMIN_API_TOKEN": "test-admin-token",
+                    "OTA_VOCABULARY_DB": str(
+                        Path(temp_dir) / "ota-vocabulary.sqlite3"
+                    ),
+                },
+            ):
+                headers = {"Authorization": "Bearer test-admin-token"}
+                for payload in (duplicate_ids, duplicate_words):
+                    response = self.client.put(
+                        "/api/v1/admin/vocabulary",
+                        json=payload,
+                        headers=headers,
+                    )
+                    self.assertEqual(response.status_code, 422)
+
+                invalid_id = self.client.put(
+                    "/api/v1/admin/vocabulary",
+                    json={
+                        "items": [
+                            {
+                                "fsl_id": True,
+                                "word": "Bad ID",
+                                "meaning": "Invalid identifier",
+                                "gesture_label": "bad_id",
+                            }
+                        ]
+                    },
+                    headers={"Authorization": "Bearer test-admin-token"},
+                )
+                self.assertEqual(invalid_id.status_code, 422)
 
     def test_hands_status_idle(self):
         response = self.client.get("/api/v1/hands/status")
