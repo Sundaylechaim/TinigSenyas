@@ -182,7 +182,7 @@ jobs:
       # this exact signed app release through the Shorebird patch workflow.
       - name: Build Shorebird-enabled signed ARM64 release APK
         working-directory: frontend
-        run: shorebird release android --artifact apk --target-platform=android-arm64 --flutter-version=3.47.9 --release-version=1.0.0+2019
+        run: shorebird release android --artifact apk --target-platform=android-arm64 --flutter-version=3.47.9
 
       - name: Verify release APK signature and certificate
         env:
