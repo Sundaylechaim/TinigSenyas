@@ -2,13 +2,9 @@ import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:tinigsenyas/models/sign_result.dart';
+import 'package:tinigsenyas/models/recognition_graph_frame.dart';
 
-enum RecognitionMode {
-  auto,
-  alphabet,
-  phrases,
-  medical,
-}
+enum RecognitionMode { auto, alphabet, phrases, medical }
 
 abstract class RecognitionService {
   bool get isModelReady;
@@ -25,6 +21,7 @@ abstract class RecognitionService {
   Stream<SignResult> get predictions;
   Stream<bool>? get pauseStatus;
   Stream<List<List<Offset>>>? get landmarkPointsStream;
+  Stream<RecognitionGraphFrame>? get graphFrames => null;
   bool get isPaused;
   void setPaused(bool value);
   Future<void> reloadModels();

@@ -1,13 +1,13 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:record/record.dart';
 import '../services/tts_service.dart';
 import '../services/database_helper.dart';
-import '../services/speech_transcript_session.dart';
-import '../services/speech_locale_selector.dart';
+import '../services/offline_filipino_asr_service.dart';
 import '../widgets/connectivity_badge.dart';
 import '../services/settings_service.dart';
 import 'text_to_sign_screen.dart';
@@ -23,8 +23,11 @@ class SpeechToTextScreen extends StatefulWidget {
 }
 
 class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
-  final stt.SpeechToText _speech = stt.SpeechToText();
-  final SpeechTranscriptSession _transcriptSession = SpeechTranscriptSession();
+  final AudioRecorder _recorder = AudioRecorder();
+  final OfflineFilipinoAsrService _offlineAsr = OfflineFilipinoAsrService();
+  StreamSubscription<Uint8List>? _recordingSubscription;
+  final BytesBuilder _recordingBuffer = BytesBuilder(copy: false);
+  Timer? _recordingLimitTimer;
   bool _isListening = false;
   String _currentWords = '';
   final List<String> _messages = [];
@@ -33,8 +36,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   bool _isStarting = false;
   bool _isStopping = false;
   bool _isInitializingSpeech = false;
-  String? _offlineFilipinoLocale;
-  int _activeSessionId = 0;
+  bool _offlineModelInstalled = false;
+  int _modelDownloadProgress = 0;
+  static const _maxRecordingDuration = Duration(seconds: 25);
 
   @override
   void initState() {
@@ -46,83 +50,26 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
     if (_isInitializingSpeech) return;
     if (mounted) setState(() => _isInitializingSpeech = true);
     try {
-      final available = await _speech.initialize(
-        onStatus: _onSpeechStatus,
-        onError: _onSpeechError,
-      );
+      final installed = !kIsWeb && await _offlineAsr.isInstalled();
       if (!mounted) return;
-      if (!available) {
-        setState(() {
-          _speechAvailable = false;
-          _offlineFilipinoLocale = null;
-          _speechError = 'Speech recognition is not available on this device.';
-        });
-        return;
-      }
-
-      // Browser recognition is kept as a demo fallback. On mobile, only
-      // enable transcription when the platform reports a Filipino locale for
-      // its on-device recognizer.
-      if (kIsWeb) {
-        setState(() {
-          _speechAvailable = true;
-          _offlineFilipinoLocale = null;
-          _speechError = null;
-        });
-        return;
-      }
-
-      final locales = await _speech.locales();
-      final locale = selectOfflineFilipinoLocale(
-        locales.map((supported) => supported.localeId),
-      );
       setState(() {
-        _offlineFilipinoLocale = locale;
-        _speechAvailable = locale != null;
-        _speechError = locale == null
-            ? 'Offline Filipino speech is not available. Install Filipino or Tagalog offline speech data on this phone, then tap Retry.'
+        _offlineModelInstalled = installed;
+        _speechAvailable = !kIsWeb;
+        _speechError = kIsWeb
+            ? 'Offline Filipino transcription is available in the mobile app.'
             : null;
       });
     } catch (error) {
       if (mounted) {
         setState(() {
-          _speechAvailable = false;
-          _offlineFilipinoLocale = null;
-          _speechError = kIsWeb
-              ? error.toString()
-              : 'Could not check offline Filipino speech support. Check the phone speech service and retry.';
+          _speechAvailable = !kIsWeb;
+          _speechError =
+              'Could not check the offline Filipino speech model: $error';
         });
       }
     } finally {
       if (mounted) setState(() => _isInitializingSpeech = false);
     }
-  }
-
-  void _onSpeechStatus(String status) {
-    if (status != 'done' && status != 'notListening') return;
-    if (!mounted) return;
-    setState(() {
-      _finalizeCurrentWords();
-      _isListening = false;
-    });
-  }
-
-  void _finalizeCurrentWords() {
-    final words = _transcriptSession.finish();
-    if (words != null) _messages.add(words);
-    _currentWords = '';
-  }
-
-  void _onSpeechError(dynamic error) {
-    if (!mounted) return;
-    setState(() {
-      _speechError = kIsWeb
-          ? error.toString()
-          : 'Offline Filipino transcription stopped. Check that Filipino or Tagalog offline speech data is installed, then try again.';
-      _currentWords = '';
-      _transcriptSession.cancel();
-    });
-    unawaited(_stopListening(_activeSessionId, finalizePartial: false));
   }
 
   Future<void> _toggleListen() async {
@@ -138,8 +85,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
             icon: const Icon(Icons.mic, color: _kAppBlue, size: 40),
             title: const Text('Microphone Consent'),
             content: const Text(
-              'TinigSenyas needs your consent to access the microphone to convert your spoken voice '
-              'into Filipino Sign Language. Audio is processed directly for translation.',
+              'TinigSenyas records up to 25 seconds and transcribes it with an on-device Filipino speech model. '
+              'The model downloads once (about 111 MB) while online. Recorded audio is processed on this phone '
+              'and is not uploaded for transcription.',
             ),
             actions: [
               TextButton(
@@ -166,7 +114,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
         }
         await settings.setRecordingConsent(true);
       }
-      if (!_speechAvailable) {
+      if (!_speechAvailable || kIsWeb) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -181,89 +129,109 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
 
       setState(() {
         _isStarting = true;
-        _isListening = true;
-        _currentWords = 'Listening...';
+        _currentWords = _offlineModelInstalled
+            ? 'Preparing offline speech model...'
+            : 'Downloading offline speech model...';
         _speechError = null;
-        _transcriptSession.reset();
-        _activeSessionId++;
       });
-      final sessionId = _activeSessionId;
-
       try {
-        await _speech.listen(
-          listenOptions: stt.SpeechListenOptions(
-            partialResults: true,
-            listenMode: stt.ListenMode.dictation,
-            pauseFor: const Duration(seconds: 3),
-            cancelOnError: true,
-            localeId: _offlineFilipinoLocale,
-            onDevice: !kIsWeb,
-          ),
-          onResult: (result) {
-            if (!mounted ||
-                sessionId != _activeSessionId ||
-                _transcriptSession.isFinalized) {
-              return;
-            }
-            final words = result.recognizedWords.trim();
-            final finalWords = _transcriptSession.addResult(
-              words,
-              isFinal: result.finalResult,
-            );
-            setState(() {
-              if (finalWords != null) {
-                _messages.add(finalWords);
-                _currentWords = '';
-              } else {
-                _currentWords = words.isEmpty ? 'Listening...' : words;
+        if (!_offlineModelInstalled) {
+          await _offlineAsr.install(
+            onProgress: (received, total) {
+              if (mounted && total > 0) {
+                setState(
+                  () => _modelDownloadProgress = (received * 100 ~/ total)
+                      .clamp(0, 100),
+                );
               }
-            });
+            },
+          );
+          _offlineModelInstalled = true;
+          _modelDownloadProgress = 100;
+        }
+        await _offlineAsr.initialize();
+        if (!await _recorder.hasPermission()) {
+          throw StateError(
+            'Microphone permission is required to transcribe speech.',
+          );
+        }
+        _recordingBuffer.clear();
+        final audioStream = await _recorder.startStream(
+          const RecordConfig(
+            encoder: AudioEncoder.pcm16bits,
+            sampleRate: 16000,
+            numChannels: 1,
+            echoCancel: true,
+            noiseSuppress: true,
+          ),
+        );
+        _recordingSubscription = audioStream.listen(
+          _recordingBuffer.add,
+          onError: (Object error) {
+            if (mounted) {
+              setState(
+                () => _speechError = 'Microphone capture failed: $error',
+              );
+            }
+            unawaited(_stopListening());
           },
         );
+        _recordingLimitTimer = Timer(_maxRecordingDuration, _stopListening);
+        setState(() {
+          _isListening = true;
+          _currentWords = 'Listening offline… (up to 25 seconds)';
+        });
       } catch (error) {
-        if (mounted && sessionId == _activeSessionId) {
+        if (mounted) {
           setState(() {
-            _speechError = error.toString();
-            _isListening = false;
+            _speechError =
+                'Could not start offline Filipino transcription: $error';
             _currentWords = '';
-            _transcriptSession.cancel();
           });
         }
       } finally {
-        if (mounted && sessionId == _activeSessionId) {
-          setState(() => _isStarting = false);
-        }
+        if (mounted) setState(() => _isStarting = false);
       }
     } else {
-      await _stopListening(_activeSessionId);
+      await _stopListening();
     }
   }
 
-  Future<void> _stopListening(
-    int sessionId, {
-    bool finalizePartial = true,
-  }) async {
+  Future<void> _stopListening() async {
     if (_isStopping) return;
-    setState(() => _isStopping = true);
-    try {
-      await _speech.stop();
-      if (!mounted || sessionId != _activeSessionId) return;
+    _recordingLimitTimer?.cancel();
+    if (mounted) {
       setState(() {
-        if (finalizePartial) {
-          _finalizeCurrentWords();
-        } else {
-          _currentWords = '';
-        }
+        _isStopping = true;
         _isListening = false;
+        _currentWords = 'Transcribing on this phone...';
+      });
+    }
+    try {
+      await _recorder.stop();
+      await _recordingSubscription?.cancel();
+      _recordingSubscription = null;
+      final audio = _recordingBuffer.takeBytes();
+      final transcript = await _offlineAsr.transcribe(audio);
+      if (!mounted) return;
+      setState(() {
+        if (transcript.isNotEmpty) {
+          _messages.add(transcript);
+        } else {
+          _speechError =
+              'No speech was detected. Please speak clearly and try again.';
+        }
+        _currentWords = '';
       });
     } catch (error) {
-      if (mounted && sessionId == _activeSessionId) {
-        setState(() => _speechError = error.toString());
+      if (mounted) {
+        setState(() {
+          _speechError = 'Could not transcribe the recording offline: $error';
+          _currentWords = '';
+        });
       }
     } finally {
-      if (mounted && sessionId == _activeSessionId) {
-        setState(() => _isStopping = false);
-      }
+      if (mounted) setState(() => _isStopping = false);
     }
   }
 
@@ -319,7 +287,11 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
 
   @override
   void dispose() {
-    unawaited(_speech.stop());
+    _recordingLimitTimer?.cancel();
+    unawaited(_recordingSubscription?.cancel());
+    unawaited(_recorder.stop().catchError((_) => null));
+    unawaited(_recorder.dispose());
+    _offlineAsr.dispose();
     super.dispose();
   }
 
@@ -535,7 +507,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                                       ),
                                       const SizedBox(height: 6),
                                       Text(
-                                        'Tap the yellow button below and speak into the phone.\nSubtitles appear in real time.',
+                                        'Tap the yellow button and speak in Filipino.\nThe transcript appears when you stop.',
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
                                           fontSize: 13,
@@ -558,7 +530,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                                         isDark: isDark,
                                       ),
                                     ),
-                                    if (_isListening &&
+                                    if ((_isListening ||
+                                            _isStopping ||
+                                            _isStarting) &&
                                         _currentWords.isNotEmpty)
                                       _buildMessageBubble(
                                         _currentWords,
@@ -578,10 +552,12 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                     alignment: Alignment.centerLeft,
                     child: Text(
                       kIsWeb
-                          ? 'Browser speech recognition may require an internet connection.'
-                          : _offlineFilipinoLocale == null
-                          ? 'Filipino offline speech is not ready on this phone.'
-                          : 'On-device Filipino speech · $_offlineFilipinoLocale',
+                          ? 'Offline Filipino transcription is available in the mobile app.'
+                          : _offlineModelInstalled
+                          ? 'Offline Filipino model ready · audio stays on this phone'
+                          : _modelDownloadProgress > 0
+                          ? 'Downloading offline speech model · $_modelDownloadProgress%'
+                          : 'First use downloads the offline Filipino model (~111 MB)',
                       style: TextStyle(
                         fontSize: 12,
                         color: isDark

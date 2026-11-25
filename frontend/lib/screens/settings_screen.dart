@@ -352,18 +352,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       value: _ttsLanguage,
                       items: const [
                         DropdownMenuItem(
-                          value: 'en-PH',
-                          child: Text('English (Philippines)'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'en-US',
-                          child: Text('English (US)'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'en-GB',
-                          child: Text('English (UK)'),
-                        ),
-                        DropdownMenuItem(
                           value: 'fil-PH',
                           child: Text('Filipino'),
                         ),
@@ -405,57 +393,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 _SettingsTile(
                   icon: Icons.record_voice_over_outlined,
-                  title: 'Voice',
-                  subtitle: _isLoadingVoices
-                      ? 'Loading device voices...'
-                      : !hasLanguageVoice
-                      ? _ttsServerUrl.isNotEmpty &&
-                                _ttsLanguage.toLowerCase().startsWith('fil')
-                            ? 'No local Filipino voice; online Filipino speech is available'
-                            : 'No ${_ttsLanguageName(_ttsLanguage)} voice is installed. Add its speech data in device or browser settings.'
-                      : isRecommendedSelected
-                      ? 'Recommended voice selected automatically'
-                      : 'Alternative voice selected',
+                  title: 'Offline Filipino voice',
+                  subtitle: hasLanguageVoice
+                      ? 'Uses the Filipino voice installed on this phone'
+                      : 'Install Filipino or Tagalog speech data to speak offline',
                   bottom: _buildDropdownContainer(
                     isDark: isDark,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _isLoadingVoices
-                            ? const SizedBox(
-                                height: 38,
-                                child: Center(
-                                  child: SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : DropdownButton<String>(
-                                isExpanded: true,
-                                value: isRecommendedSelected
-                                    ? ''
-                                    : _voiceKey(selectedVoice),
-                                items: [
-                                  const DropdownMenuItem(
-                                    value: '',
-                                    child: Text('Recommended voice'),
-                                  ),
-                                  ...quickVoices.map(
-                                    (voice) => DropdownMenuItem(
-                                      value: _voiceKey(voice),
-                                      child: const Text('Alternative voice'),
-                                    ),
-                                  ),
-                                ],
-                                onChanged: !hasLanguageVoice
-                                    ? null
-                                    : _selectTtsVoice,
-                              ),
-                      ],
+                    child: Text(
+                      hasLanguageVoice
+                          ? 'Available on this phone'
+                          : 'Not installed',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
                 ),
@@ -595,7 +543,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: switch (_ttsSource) {
                     'online' =>
                       'Microsoft online voice; text is sent to Microsoft',
-                    'offline_english' => 'Offline English neural female voice',
                     'offline' => 'Installed device voice only',
                     _
                         when _ttsLanguage.toLowerCase().startsWith('fil') &&
@@ -625,22 +572,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           value: 'offline',
                           child: Text('Offline'),
                         ),
-                        if (!kIsWeb &&
-                            defaultTargetPlatform == TargetPlatform.android)
-                          const DropdownMenuItem(
-                            value: 'offline_english',
-                            child: Text('English female'),
-                          ),
                       ],
                       onChanged: (value) async {
                         if (value == null) return;
-                        if (value == 'offline_english' &&
-                            _ttsLanguage.toLowerCase() != 'en-us') {
-                          _showError(
-                            'Select English (US) before choosing the offline English voice.',
-                          );
-                          return;
-                        }
                         try {
                           await _settingsService.setTtsSource(value);
                           if (mounted) setState(() => _ttsSource = value);
@@ -651,7 +585,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ),
-                if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                if (_ttsLanguage.toLowerCase() == 'en-us' &&
+                    !kIsWeb &&
+                    defaultTargetPlatform == TargetPlatform.android)
                   _SettingsTile(
                     icon: Icons.download_for_offline_outlined,
                     title: 'Offline English female voice',
@@ -769,7 +705,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                   ),
-                if (_ttsServerUrl.isNotEmpty)
+                if (_ttsSource != 'offline')
                   _SettingsTile(
                     icon: Icons.cloud_outlined,
                     title: 'Filipino speech service',
@@ -783,7 +719,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   _SettingsTile(
                     icon: Icons.spatial_audio_off_outlined,
                     title: 'Online Filipino voice',
-                    subtitle: 'Female and male neural voices',
+                    subtitle: 'Choose Blessica or Angelo for online Filipino speech',
                     bottom: _buildDropdownContainer(
                       isDark: isDark,
                       child: DropdownButton<String>(

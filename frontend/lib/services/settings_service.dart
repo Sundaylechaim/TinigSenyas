@@ -35,6 +35,17 @@ class SettingsService extends ChangeNotifier {
       }
       await _prefs!.setBool(_ttsLanguageMigrationKey, true);
     }
+    // TinigSenyas supports Filipino output. Keep old English-only/offline-pack
+    // preferences from surfacing voices that are no longer offered in Settings.
+    final savedLanguage = _prefs!.getString(_ttsLanguageKey);
+    if (savedLanguage != null &&
+        !savedLanguage.toLowerCase().startsWith('fil') &&
+        !savedLanguage.toLowerCase().startsWith('tl')) {
+      await _prefs!.setString(_ttsLanguageKey, 'fil-PH');
+    }
+    if (_prefs!.getString(_ttsSourceKey) == 'offline_english') {
+      await _prefs!.setString(_ttsSourceKey, 'offline');
+    }
   }
 
   // Theme

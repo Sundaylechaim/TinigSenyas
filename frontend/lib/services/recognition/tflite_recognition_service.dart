@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:camera/camera.dart';
@@ -12,6 +13,7 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:hand_landmarker/hand_landmarker.dart';
 import 'package:tinigsenyas/models/sign_result.dart';
 import 'recognition_service.dart';
+import '../../models/recognition_graph_frame.dart';
 
 class TfliteRecognitionService implements RecognitionService {
   static const MethodChannel _poseLandmarkerChannel = MethodChannel(
@@ -22,8 +24,11 @@ class TfliteRecognitionService implements RecognitionService {
   final _pauseStatusController = StreamController<bool>.broadcast();
   final _landmarkStreamController =
       StreamController<List<List<Offset>>>.broadcast();
+  final _graphFrameController =
+      StreamController<RecognitionGraphFrame>.broadcast();
 
   _ModelRunner? _fslModelInterpreter;
+  _ModelRunner? _phraseExtensionInterpreter;
   _ModelRunner? _alphabetInterpreter;
   _ModelRunner? _medicalModelInterpreter;
   HandLandmarkerPlugin? _handLandmarker;
@@ -41,13 +46,16 @@ class TfliteRecognitionService implements RecognitionService {
   Future<void>? _reloadModelsTask;
   DateTime? _lastAlphabetInferenceAt;
   DateTime? _lastMedicalInferenceAt;
+  RecognitionGraphFrame? _latestGraphFrame;
 
   List<String> _fslLabels = [];
+  List<String> _phraseExtensionLabels = [];
   List<String> _medicalLabels = [];
   List<String> _alphabetLabels = [];
-  static const int _conversationalClassCount = 103;
   static const int _medicalClassCount = 35;
   static const int _alphabetClassCount = 28;
+  static const int _phraseExtensionClassCount = 100;
+  static const int _phraseExtensionSequenceLength = 64;
 
   RecognitionMode _mode = RecognitionMode.phrases;
   @override
@@ -63,6 +71,7 @@ class TfliteRecognitionService implements RecognitionService {
     _alphaEmittedLabel = null;
     _alphaReleaseFrameCount = 0;
     _fslProbHistory.clear();
+    _phraseExtensionProbHistory.clear();
     _fslCandidate = null;
     _fslCandidateCount = 0;
     _fslReleaseFrameCount = 0;
@@ -97,6 +106,7 @@ class TfliteRecognitionService implements RecognitionService {
   // Rolling Softmax Probability Distribution Smoothing
   final List<List<double>> _alphaProbHistory = [];
   final List<List<double>> _fslProbHistory = [];
+  final List<List<double>> _phraseExtensionProbHistory = [];
   final List<List<double>> _medProbHistory = [];
   static const int _alphaProbHistorySize = 3;
   static const int _phraseProbHistorySize = 3;
@@ -150,6 +160,9 @@ class TfliteRecognitionService implements RecognitionService {
       top1 >= _paperHighConfidence ||
       (top1 >= _paperMinimumConfidence && top1 - top2 >= _paperMinimumMargin);
 
+  bool _passesPhraseExtensionConfidenceGate(double top1, double top2) =>
+      top1 >= 0.90 && top1 - top2 >= 0.20;
+
   bool get _hasRecentGestureActivity =>
       _lastGestureMotionAt != null &&
       DateTime.now().difference(_lastGestureMotionAt!) <= _gestureSettleWindow;
@@ -177,7 +190,7 @@ class TfliteRecognitionService implements RecognitionService {
     final phraseReady =
         _poseLandmarkerReady &&
         _fslModelInterpreter != null &&
-        _fslLabels.length == _conversationalClassCount;
+        _fslLabels.length >= 2;
     final medicalReady =
         _poseLandmarkerReady &&
         _medicalModelInterpreter != null &&
@@ -240,7 +253,7 @@ class TfliteRecognitionService implements RecognitionService {
   Future<List<String>> _loadLabels({
     required File? localFile,
     required String assetPath,
-    required int expectedCount,
+    required int? expectedCount,
     required String modelName,
   }) async {
     if (localFile != null && await localFile.exists()) {
@@ -250,10 +263,13 @@ class TfliteRecognitionService implements RecognitionService {
             .map((label) => label.trim())
             .where((label) => label.isNotEmpty)
             .toList();
-        if (localLabels.length == expectedCount) return localLabels;
+        if (expectedCount == null
+            ? localLabels.length >= 2
+            : localLabels.length == expectedCount) {
+          return localLabels;
+        }
         debugPrint(
-          '[TfliteRecognitionService] Ignoring $modelName labels: '
-          'expected $expectedCount, found ${localLabels.length}.',
+          '[TfliteRecognitionService] Ignoring invalid $modelName labels: found ${localLabels.length}.',
         );
       } catch (error) {
         debugPrint(
@@ -268,16 +284,72 @@ class TfliteRecognitionService implements RecognitionService {
           .map((label) => label.trim())
           .where((label) => label.isNotEmpty)
           .toList();
-      if (bundledLabels.length == expectedCount) return bundledLabels;
+      if (expectedCount == null
+          ? bundledLabels.length >= 2
+          : bundledLabels.length == expectedCount) {
+        return bundledLabels;
+      }
       debugPrint(
-        '[TfliteRecognitionService] Invalid bundled $modelName labels: '
-        'expected $expectedCount, found ${bundledLabels.length}.',
+        '[TfliteRecognitionService] Invalid bundled $modelName labels: found ${bundledLabels.length}.',
       );
     } catch (error) {
       debugPrint(
         '[TfliteRecognitionService] Could not load bundled $modelName labels: $error',
       );
     }
+    return const [];
+  }
+
+  Future<List<String>> _loadPhraseExtensionLabels({
+    required File? localFile,
+  }) async {
+    List<String>? parse(String source) {
+      final decoded = jsonDecode(source);
+      if (decoded is! Map<String, dynamic> ||
+          decoded.length != _phraseExtensionClassCount) {
+        return null;
+      }
+      final labels = <String>[];
+      final keys = <String>{};
+      for (var index = 0; index < _phraseExtensionClassCount; index++) {
+        final entry = decoded['$index'];
+        if (entry is! Map<String, dynamic>) return null;
+        final label = (entry['display_label'] as String?)?.trim() ?? '';
+        final key = (entry['key'] as String?)?.trim() ?? '';
+        if (label.isEmpty || key.isEmpty || !keys.add(key)) return null;
+        labels.add(label);
+      }
+      return labels.toSet().length == _phraseExtensionClassCount
+          ? labels
+          : null;
+    }
+
+    if (localFile != null && await localFile.exists()) {
+      try {
+        final labels = parse(await localFile.readAsString());
+        if (labels != null) return labels;
+      } catch (error) {
+        debugPrint(
+          '[TfliteRecognitionService] Could not load OTA phrase extension labels: $error',
+        );
+      }
+    }
+    try {
+      final labels = parse(
+        await rootBundle.loadString(
+          'assets/model/phrase_extension_labels.json',
+        ),
+      );
+      if (labels != null) return labels;
+    } catch (error) {
+      debugPrint(
+        '[TfliteRecognitionService] Could not load bundled phrase extension labels: $error',
+      );
+    }
+    debugPrint(
+      '[TfliteRecognitionService] Phrase extension map must contain '
+      '100 unique ordered entries; extension model will not be used.',
+    );
     return const [];
   }
 
@@ -359,6 +431,10 @@ class TfliteRecognitionService implements RecognitionService {
   @override
   Stream<List<List<Offset>>>? get landmarkPointsStream =>
       _landmarkStreamController.stream;
+
+  @override
+  Stream<RecognitionGraphFrame>? get graphFrames =>
+      _graphFrameController.stream;
 
   @override
   Stream<SignResult> get predictions => _predictionsController.stream;
@@ -443,8 +519,17 @@ class TfliteRecognitionService implements RecognitionService {
       _fslLabels = await _loadLabels(
         localFile: localLabelsFile,
         assetPath: 'assets/model/labels.txt',
-        expectedCount: _conversationalClassCount,
+        // Phrase-model output width follows the bundled/OTA label file. The
+        // interpreter's output tensor is checked against this exact width.
+        expectedCount: null,
         modelName: 'conversational',
+      );
+
+      final localPhraseExtensionLabels = useLocalOverrides && modelsDir != null
+          ? File(p.join(modelsDir.path, 'phrase_extension_labels.json'))
+          : null;
+      _phraseExtensionLabels = await _loadPhraseExtensionLabels(
+        localFile: localPhraseExtensionLabels,
       );
 
       final localMedLabelsFile = useLocalOverrides && modelsDir != null
@@ -492,13 +577,41 @@ class TfliteRecognitionService implements RecognitionService {
         localFile: localModelFile,
         assetPath: 'assets/model/fsl_model.tflite',
         inputShape: const [1, 60, 75, 3],
-        outputShape: [1, _conversationalClassCount],
+        outputShape: [1, _fslLabels.length],
         options: InterpreterOptions()..threads = 2,
       );
       if (loadedConversational != null) {
         final previous = _fslModelInterpreter;
         _fslModelInterpreter = loadedConversational;
         await _closeModel(previous);
+      }
+
+      final localPhraseExtensionModel = useLocalOverrides && modelsDir != null
+          ? File(p.join(modelsDir.path, 'fsl_phrase_extension.tflite'))
+          : null;
+      final loadedPhraseExtension =
+          _phraseExtensionLabels.length == _phraseExtensionClassCount
+          ? await _loadValidatedInterpreter(
+              modelName: 'FSL phrase extension ST-GCN',
+              localFile: localPhraseExtensionModel,
+              assetPath: 'assets/model/fsl_phrase_extension.tflite',
+              inputShape: const [1, _phraseExtensionSequenceLength, 75, 3],
+              outputShape: const [1, _phraseExtensionClassCount],
+              options: InterpreterOptions()..threads = 2,
+            )
+          : null;
+      if (loadedPhraseExtension != null) {
+        final previous = _phraseExtensionInterpreter;
+        _phraseExtensionInterpreter = loadedPhraseExtension;
+        await _closeModel(previous);
+      } else {
+        final previous = _phraseExtensionInterpreter;
+        _phraseExtensionInterpreter = null;
+        await _closeModel(previous);
+        debugPrint(
+          '[TfliteRecognitionService] FSL phrase extension unavailable; '
+          'the existing phrase model remains active.',
+        );
       }
 
       final localMedModelFile = useLocalOverrides && modelsDir != null
@@ -522,6 +635,7 @@ class TfliteRecognitionService implements RecognitionService {
         '[TfliteRecognitionService] Model connection status: '
         'alphabet=${_alphabetInterpreter != null}, '
         'conversational=${_fslModelInterpreter != null}, '
+        'phraseExtension=${_phraseExtensionInterpreter != null && _phraseExtensionLabels.length == _phraseExtensionClassCount}, '
         'medical=${_medicalModelInterpreter != null}.',
       );
     } catch (e) {
@@ -818,6 +932,7 @@ class TfliteRecognitionService implements RecognitionService {
     _poseNormalizationScale = 0.20;
     _alphaProbHistory.clear();
     _fslProbHistory.clear();
+    _phraseExtensionProbHistory.clear();
     _medProbHistory.clear();
     _motionHistory.clear();
     _smoothedPrimaryHand = null;
@@ -1471,13 +1586,63 @@ class TfliteRecognitionService implements RecognitionService {
       }
     }
 
+    final cameraPose = poseLandmarks
+        .map(_transformLandmark)
+        .map((point) => Offset(point.$1, point.$2))
+        .toList(growable: false);
+    final cameraHands = hands
+        .map(
+          (hand) => hand
+              .map((point) => Offset(point.$1, point.$2))
+              .toList(growable: false),
+        )
+        .toList(growable: false);
+
     _sequenceBuffer.add(currentJoints);
     if (_sequenceBuffer.length > _targetSequenceLength) {
       _sequenceBuffer.removeAt(0);
     }
+    final previous = _latestGraphFrame;
+    final frame = RecognitionGraphFrame(
+      capturedAt: DateTime.now(),
+      pose: cameraPose,
+      hands: cameraHands,
+      normalizedJoints: currentJoints
+          .map(List<double>.unmodifiable)
+          .toList(growable: false),
+      sequenceLength: _sequenceBuffer.length,
+      modelName: previous?.modelName,
+      inferenceLatencyMs: previous?.inferenceLatencyMs,
+      scores: previous?.scores ?? const [],
+    );
+    _latestGraphFrame = frame;
+    _graphFrameController.add(frame);
   }
 
-  /// Runs 103-class ST-GCN conversational model on continuous sequence buffer
+  void _publishGraphInference(
+    String modelName,
+    int latencyMs,
+    List<double> probabilities,
+    List<String> labels,
+  ) {
+    final frame = _latestGraphFrame;
+    if (frame == null || probabilities.length != labels.length) return;
+    final indices = List<int>.generate(labels.length, (index) => index)
+      ..sort((a, b) => probabilities[b].compareTo(probabilities[a]));
+    final scores = indices
+        .take(3)
+        .map((index) => RecognitionScore(labels[index], probabilities[index]))
+        .toList(growable: false);
+    final updated = frame.withInference(
+      modelName: modelName,
+      latencyMs: latencyMs,
+      scores: scores,
+    );
+    _latestGraphFrame = updated;
+    _graphFrameController.add(updated);
+  }
+
+  /// Runs the label-map-sized ST-GCN conversational model on a sequence buffer.
   void _evaluateConversationalSign() {
     final model = _fslModelInterpreter;
     if (model == null ||
@@ -1504,6 +1669,7 @@ class TfliteRecognitionService implements RecognitionService {
     final output = [List<double>.filled(_fslLabels.length, 0.0)];
 
     _runModelInference(() async {
+      final inferenceTimer = Stopwatch()..start();
       await model.run(input, output);
       final routeStillPhrase =
           _mode == RecognitionMode.phrases ||
@@ -1519,7 +1685,8 @@ class TfliteRecognitionService implements RecognitionService {
       }
 
       final rawProbs = output[0];
-      if (rawProbs.length != _fslLabels.length) {
+      if (rawProbs.length != _fslLabels.length ||
+          rawProbs.any((probability) => !probability.isFinite)) {
         debugPrint(
           '[TfliteRecognitionService] Phrase model output count does not match its labels.',
         );
@@ -1537,21 +1704,93 @@ class TfliteRecognitionService implements RecognitionService {
         }
       }
 
-      var top1Idx = 0;
-      var top1Prob = probs[0];
-      var top2Prob = 0.0;
-      for (var i = 1; i < probs.length; i++) {
-        if (probs[i] > top1Prob) {
-          top2Prob = top1Prob;
-          top1Prob = probs[i];
-          top1Idx = i;
-        } else if (probs[i] > top2Prob) {
-          top2Prob = probs[i];
+      var selectedLabels = _fslLabels;
+      var selectedProbs = probs;
+      var selectedModelName = 'ST-GCN · FSL phrases';
+      var isExtensionPrediction = false;
+      final extensionModel = _phraseExtensionInterpreter;
+      if (extensionModel != null &&
+          _phraseExtensionLabels.length == _phraseExtensionClassCount) {
+        final extensionInput = _resampleSequence(
+          _sequenceBuffer,
+          _phraseExtensionSequenceLength,
+        );
+        final extensionOutput = [
+          List<double>.filled(_phraseExtensionClassCount, 0.0),
+        ];
+        try {
+          await extensionModel.run(extensionInput, extensionOutput);
+        } catch (error) {
+          debugPrint(
+            '[TfliteRecognitionService] Phrase extension inference failed; '
+            'using the existing phrase model: $error',
+          );
+          _phraseExtensionProbHistory.clear();
+          if (identical(_phraseExtensionInterpreter, extensionModel)) {
+            _phraseExtensionInterpreter = null;
+            await _closeModel(extensionModel);
+          }
+        }
+        final extensionRaw = extensionOutput[0];
+        if (extensionRaw.length == _phraseExtensionClassCount &&
+            extensionRaw.every((probability) => probability.isFinite)) {
+          _phraseExtensionProbHistory.add(List<double>.from(extensionRaw));
+          if (_phraseExtensionProbHistory.length > _phraseProbHistorySize) {
+            _phraseExtensionProbHistory.removeAt(0);
+          }
+          final extensionProbs = List<double>.filled(
+            _phraseExtensionClassCount,
+            0.0,
+          );
+          for (final frameProbs in _phraseExtensionProbHistory) {
+            for (var i = 0; i < frameProbs.length; i++) {
+              extensionProbs[i] +=
+                  frameProbs[i] / _phraseExtensionProbHistory.length;
+            }
+          }
+          final extensionBest = _topTwo(extensionProbs);
+          final extensionLabel = _phraseExtensionLabels[extensionBest.$1];
+          final labelAlreadySupported = _fslLabels.any(
+            (label) =>
+                _normalizePhraseLabel(label) ==
+                _normalizePhraseLabel(extensionLabel),
+          );
+          // Keep current classes on the established model. The new model only
+          // contributes labels that the shipped 103-class head cannot emit.
+          // A stricter confidence and margin gate limits unvalidated additions.
+          if (!labelAlreadySupported &&
+              _passesPhraseExtensionConfidenceGate(
+                extensionBest.$2,
+                extensionBest.$3,
+              )) {
+            selectedLabels = _phraseExtensionLabels;
+            selectedProbs = extensionProbs;
+            selectedModelName = 'ST-GCN · FSL phrase extension';
+            isExtensionPrediction = true;
+          }
+        } else {
+          debugPrint(
+            '[TfliteRecognitionService] Ignoring invalid phrase extension output.',
+          );
         }
       }
+      inferenceTimer.stop();
+      _publishGraphInference(
+        selectedModelName,
+        inferenceTimer.elapsedMilliseconds,
+        selectedProbs,
+        selectedLabels,
+      );
+      final best = _topTwo(selectedProbs);
+      final top1Idx = best.$1;
+      final top1Prob = best.$2;
+      final top2Prob = best.$3;
+      final passesConfidence = isExtensionPrediction
+          ? _passesPhraseExtensionConfidenceGate(top1Prob, top2Prob)
+          : _passesPaperConfidenceGate(top1Prob, top2Prob);
 
-      if (_passesPaperConfidenceGate(top1Prob, top2Prob)) {
-        final displayWord = _formatFslPhrase(_fslLabels[top1Idx]);
+      if (passesConfidence) {
+        final displayWord = _formatFslPhrase(selectedLabels[top1Idx]);
         if (displayWord == _fslCandidate) {
           _fslCandidateCount++;
         } else {
@@ -1567,7 +1806,9 @@ class TfliteRecognitionService implements RecognitionService {
               label: displayWord,
               confidence: top1Prob,
               timestamp: predictionTime,
-              source: 'st_gcn_model',
+              source: isExtensionPrediction
+                  ? 'st_gcn_phrase_extension'
+                  : 'st_gcn_model',
             ),
           );
         }
@@ -1578,11 +1819,39 @@ class TfliteRecognitionService implements RecognitionService {
     });
   }
 
+  static String _normalizePhraseLabel(String label) =>
+      label.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  static (int, double, double) _topTwo(List<double> probabilities) {
+    var topIndex = 0;
+    var topProbability = double.negativeInfinity;
+    var secondProbability = double.negativeInfinity;
+    for (var i = 0; i < probabilities.length; i++) {
+      final probability = probabilities[i];
+      if (probability > topProbability) {
+        secondProbability = topProbability;
+        topProbability = probability;
+        topIndex = i;
+      } else if (probability > secondProbability) {
+        secondProbability = probability;
+      }
+    }
+    return (topIndex, topProbability, secondProbability);
+  }
+
   /// Formats raw FSL class names to clear, user-friendly labels with English translations
   static String _formatFslPhrase(String sign) {
     switch (sign.trim()) {
       case 'Kamusta':
         return 'Kamusta (Hello)';
+      case 'Anxiety':
+        return 'Pagkabalisa (Anxiety)';
+      case 'Depression':
+        return 'Depresyon (Depression)';
+      case 'Inflammation':
+        return 'Pamamaga (Inflammation)';
+      case 'Sneezing':
+        return 'Bahing (Sneezing)';
       case 'Kamusta ka':
         return 'Kamusta ka (How are you)';
       case 'Salamat':
@@ -1641,7 +1910,9 @@ class TfliteRecognitionService implements RecognitionService {
     final output = [List<double>.filled(_medicalLabels.length, 0.0)];
 
     _runModelInference(() async {
+      final inferenceTimer = Stopwatch()..start();
       await model.run(input, output);
+      inferenceTimer.stop();
       if (!_isRunning ||
           _isPaused ||
           _modelsReloading ||
@@ -1669,6 +1940,12 @@ class TfliteRecognitionService implements RecognitionService {
           probs[i] += frameProbs[i] / _medProbHistory.length;
         }
       }
+      _publishGraphInference(
+        'ST-GCN · Medical FSL',
+        inferenceTimer.elapsedMilliseconds,
+        probs,
+        _medicalLabels,
+      );
 
       var top1Idx = 0;
       var top1Prob = probs[0];
@@ -1721,44 +1998,46 @@ class TfliteRecognitionService implements RecognitionService {
 
   /// Formats raw medical signs to bilingual clinical & patient-friendly labels
   static String _formatMedicalPhrase(String sign) {
-    switch (sign.trim()) {
-      case 'Alin':
-        return 'Alin (Which)';
-      case 'Allergic':
-        return 'Allergic (Allergy)';
-      case 'Ano':
-        return 'Ano (What)';
-      case 'Bahing':
-        return 'Bahing (Sneezing)';
-      case 'Doktor':
-        return 'Doktor (Doctor)';
-      case 'Edad':
-        return 'Edad (Age)';
-      case 'Ikaw':
-        return 'Ikaw (You)';
-      case 'Ilan':
-        return 'Ilan (How many)';
-      case 'Kailan':
-        return 'Kailan (When)';
-      case 'Lagnat':
-        return 'Lagnat (Fever)';
-      case 'Magkano':
-        return 'Magkano (How much)';
-      case 'Nahihilo':
-        return 'Nahihilo (Dizzy)';
-      case 'Nahihirapan Huminga':
-        return 'Nahihirapan Huminga (Shortness of breath)';
-      case 'Pakiramdam':
-        return 'Pakiramdam (Condition / Feeling)';
-      case 'Salamat':
-        return 'Salamat (Thank you)';
-      case 'Sino':
-        return 'Sino (Who)';
-      case 'Sipon':
-        return 'Sipon (Cold / Runny nose)';
-      default:
-        return sign;
-    }
+    const translations = {
+      'Alin': 'Which',
+      'Allergic': 'Allergy',
+      'Ano': 'What',
+      'Bahing': 'Sneezing',
+      'Doktor': 'Doctor',
+      'Edad': 'Age',
+      'Ikaw': 'You',
+      'Ilan': 'How many',
+      'Kailan': 'When',
+      'Lagnat': 'Fever',
+      'Magkano': 'How much',
+      'Nahihilo': 'Dizzy',
+      'Nahihirapan Huminga': 'Shortness of breath',
+      'Pakiramdam': 'Condition / feeling',
+      'Salamat': 'Thank you',
+      'Sino': 'Who',
+      'Sipon': 'Cold / runny nose',
+      'Anxiety': 'Anxiety',
+      'Bakit': 'Why',
+      'Depresyon': 'Depression',
+      'Dumudugo': 'Bleeding',
+      'Gamot': 'Medicine',
+      'Mahapdi': 'Stinging / painful',
+      'Makati': 'Itchy',
+      'Masakit': 'Painful',
+      'Masakit ang Ulo': 'Headache',
+      'Nurse': 'Nurse',
+      'Paano': 'How',
+      'Paghinga': 'Breathing',
+      'Pagod': 'Tired',
+      'Pamamaga': 'Swelling',
+      'Pangalan': 'Name',
+      'Saan': 'Where',
+      'Sakit': 'Illness / pain',
+      'Tensiyon': 'Blood pressure',
+    };
+    final clean = sign.trim();
+    final translation = translations[clean];
+    return translation == null ? clean : '$clean ($translation)';
   }
 
   /// Linearly resamples buffer to exact 60-frame ST-GCN tensor input with true linear interpolation
@@ -1804,13 +2083,16 @@ class TfliteRecognitionService implements RecognitionService {
     _predictionsController.close();
     _pauseStatusController.close();
     _landmarkStreamController.close();
+    _graphFrameController.close();
     final models = [
       _alphabetInterpreter,
       _fslModelInterpreter,
+      _phraseExtensionInterpreter,
       _medicalModelInterpreter,
     ];
     _alphabetInterpreter = null;
     _fslModelInterpreter = null;
+    _phraseExtensionInterpreter = null;
     _medicalModelInterpreter = null;
     unawaited(_disposeModels(models));
   }

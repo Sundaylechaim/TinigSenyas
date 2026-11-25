@@ -58,8 +58,9 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
 
   Future<void> _loadLabels() async {
     try {
-      final rawLabels = await rootBundle.loadString('assets/model/labels.txt');
-      final labels = _parseLabels(rawLabels);
+      // Both ST-GCN label maps are part of the vocabulary. Loading only the
+      // conversational map made medical signs appear unavailable here.
+      final labels = await _loadBundledModelLabels();
       if (!mounted) return;
       final initialText = widget.initialText.trim();
       final initialSegments = initialText.isEmpty
@@ -109,12 +110,39 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
       .where((label) => label.isNotEmpty)
       .toList();
 
+  Future<List<String>> _loadBundledModelLabels() async {
+    final maps = await Future.wait([
+      rootBundle.loadString('assets/model/labels.txt'),
+      rootBundle.loadString('assets/model/medical_labels.txt'),
+    ]);
+    return _mergeLabels(maps.map(_parseLabels));
+  }
+
+  List<String> _mergeLabels(Iterable<List<String>> maps) {
+    final seen = <String>{};
+    final merged = <String>[];
+    for (final map in maps) {
+      for (final label in map) {
+        if (seen.add(_normalize(label))) merged.add(label);
+      }
+    }
+    return merged;
+  }
+
   Future<void> _refreshOtaLabels() async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      final otaLabelsFile = File(p.join(appDir.path, 'models', 'labels.txt'));
-      if (!await otaLabelsFile.exists()) return;
-      final labels = _parseLabels(await otaLabelsFile.readAsString());
+      final modelsDir = Directory(p.join(appDir.path, 'models'));
+      final files = [
+        File(p.join(modelsDir.path, 'labels.txt')),
+        File(p.join(modelsDir.path, 'medical_labels.txt')),
+      ];
+      final rawMaps = <String>[];
+      for (final file in files) {
+        if (await file.exists()) rawMaps.add(await file.readAsString());
+      }
+      if (rawMaps.isEmpty) return;
+      final labels = _mergeLabels(rawMaps.map(_parseLabels));
       if (!mounted || labels.isEmpty) return;
 
       setState(() {
@@ -404,7 +432,7 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
                     ),
                   ),
                   Text(
-                    '$supportedCount/${_segments.length} supported',
+                    '$supportedCount/${_segments.length} in vocabulary',
                     style: theme.textTheme.labelLarge?.copyWith(
                       color: mutedColor,
                     ),
@@ -487,15 +515,15 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
                   fit: BoxFit.contain,
                   gaplessPlayback: true,
                   errorBuilder: (context, error, stackTrace) =>
-                      _animationUnavailableNotice(mutedColor),
+                      _fslClipUnavailable(sign.label, isDark, mutedColor),
                 )
-              : _animationUnavailableNotice(mutedColor),
+              : _fslClipUnavailable(sign.label, isDark, mutedColor),
         ),
         const SizedBox(height: 8),
         Text(
           sign.hasAnimation
               ? 'FSL sign reference · available offline'
-              : 'This word is in the FSL vocabulary; its animation is not available yet.',
+              : 'This word is recognized, but its reviewed FSL video is not in the library yet.',
           textAlign: TextAlign.center,
           style: TextStyle(color: mutedColor, fontSize: 12),
         ),
@@ -526,21 +554,34 @@ class _TextToSignScreenState extends State<TextToSignScreen> {
     );
   }
 
-  Widget _animationUnavailableNotice(Color mutedColor) => Padding(
-    padding: const EdgeInsets.all(20),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.movie_filter_outlined, size: 40, color: mutedColor),
-        const SizedBox(height: 8),
-        Text(
-          'The sign animation is not available on this device yet.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: mutedColor),
-        ),
-      ],
-    ),
-  );
+  Widget _fslClipUnavailable(String word, bool isDark, Color mutedColor) {
+    final foreground = isDark ? Colors.white : const Color(0xFF172033);
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.sign_language_rounded, size: 42, color: mutedColor),
+          const SizedBox(height: 14),
+          Text(
+            'No FSL video for “$word” yet',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: foreground,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'We only show a sign demonstration when a reviewed FSL clip is available.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: mutedColor, fontSize: 14, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
 
   int _previousSupportedIndex() {
     for (var i = _currentIndex - 1; i >= 0; i--) {

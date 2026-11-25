@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,15 +8,19 @@ import 'package:flutter/services.dart';
 import 'package:dio/dio.dart';
 import 'package:provider/provider.dart';
 import 'package:camera/camera.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../providers/recognition_provider.dart';
 import '../services/camera_service.dart';
 import '../services/tts_service.dart';
 import '../services/database_helper.dart';
 import '../models/sign_result.dart';
+import '../models/recognition_graph_frame.dart';
 import '../widgets/camera_preview.dart';
 import '../widgets/signing_space_overlay.dart';
 import '../widgets/hand_landmark_overlay.dart';
+import '../widgets/skeleton_graph_overlay.dart';
 import '../widgets/connectivity_badge.dart';
 import '../widgets/fsl_guide_sheet.dart';
 import '../services/word_prediction_service.dart';
@@ -23,6 +29,7 @@ import '../services/model_updater.dart';
 import '../services/sign_animation_catalog.dart';
 import '../services/vocabulary_sync_service.dart';
 import '../services/recognition/recognition_service.dart' show RecognitionMode;
+import '../services/sign_benchmark.dart';
 import '../widgets/gesture_motion_replay.dart';
 import 'text_to_sign_screen.dart';
 
@@ -59,13 +66,301 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   StreamSubscription<bool>? _pauseSubscription;
   StreamSubscription<CameraImage>? _frameSubscription;
   StreamSubscription<List<List<Offset>>>? _landmarksSubscription;
+  StreamSubscription<RecognitionGraphFrame>? _graphFramesSubscription;
   List<List<Offset>> _liveLandmarks = [];
+  RecognitionGraphFrame? _liveGraphFrame;
+  bool _showGraphOverlay = true;
   final List<List<List<Offset>>> _recentLandmarkFrames = [];
   List<List<List<Offset>>> _gestureReplayFrames = const [];
   Set<String> _availableAnimationSlugs = const {};
   Timer? _gestureReplayTimer;
   bool _isCheckingModelUpdate = false;
   RecognitionMode _currentMode = RecognitionMode.phrases;
+  final SignBenchmark _benchmark = SignBenchmark();
+  final TextEditingController _benchmarkDeviceController =
+      TextEditingController();
+  final TextEditingController _benchmarkAndroidController =
+      TextEditingController();
+  final TextEditingController _benchmarkConditionsController =
+      TextEditingController();
+
+  bool get _canBenchmarkOnThisDevice =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  Future<void> _showRecognitionPipeline() async {
+    final frame = _liveGraphFrame;
+    final scores = frame?.scores ?? const <RecognitionScore>[];
+    const pending = <(String, String)>[
+      ('Paalam', 'Goodbye'),
+      ('Pasensya na', 'Sorry'),
+      ('Pakiusap', 'Please'),
+      ('Tubig', 'Water'),
+      ('Kain', 'Eat'),
+      ('Tulog', 'Sleep'),
+      ('Tulong', 'Help'),
+      ('Banyo / CR', 'Restroom'),
+      ('Punta', 'Go'),
+      ('Gusto', 'Want'),
+      ('Ayaw', "Don't want"),
+      ('Tapos na', 'Finished'),
+      ('Maghintay', 'Wait'),
+    ];
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, refreshSheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'ST-GCN recognition pipeline',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Show skeleton graph on camera'),
+                    subtitle: const Text('Overlay pose and hand landmarks'),
+                    value: _showGraphOverlay,
+                    onChanged: (value) {
+                      setState(() => _showGraphOverlay = value);
+                      refreshSheet(() {});
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Camera video → MediaPipe Pose (33) + Hands (21 per hand) → shoulder-normalized 75-joint graph → 60-frame temporal window → TFLite ST-GCN → label probabilities.',
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Inside the ST-GCN, spatial graph convolution follows anatomical edges; temporal convolution links each joint across nine adjacent frames before the class-probability output.',
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Live graph: ${frame == null ? 'waiting for pose and hand landmarks' : '${frame.pose.length} pose points, ${frame.hands.length} tracked hand(s), ${frame.sequenceLength}/60 frames'}',
+                  ),
+                  Text(
+                    'Model: ${frame?.modelName ?? 'waiting for an ST-GCN inference'}',
+                  ),
+                  Text(
+                    'Inference: ${frame?.inferenceLatencyMs == null ? '—' : '${frame!.inferenceLatencyMs} ms'}',
+                  ),
+                  if (scores.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Top model probabilities',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    for (final score in scores)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 5),
+                        child: Row(
+                          children: [
+                            Expanded(child: Text(score.label)),
+                            Text(
+                              '${(score.probability * 100).toStringAsFixed(1)}%',
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                  const Divider(height: 24),
+                  const Text(
+                    'Vocabulary that still needs community-reviewed samples and a trained model:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'These are not recognized by the current model yet. Record consented examples and train/evaluate before enabling a label.',
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: pending
+                        .map(
+                          (item) =>
+                              Chip(label: Text('${item.$1} · ${item.$2}')),
+                        )
+                        .toList(),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'FSL signs can vary by region and community. Review each sign and gloss with local Deaf FSL signers before adding it to production.',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _recordTrainingSample() async {
+    final stream = _recognitionProvider?.graphFrames;
+    if (kIsWeb || stream == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'The local MediaPipe graph recorder is available in the mobile app.',
+          ),
+        ),
+      );
+      return;
+    }
+    final labelController = TextEditingController();
+    var consented = false;
+    var recording = false;
+    var count = 0;
+    List<List<List<double>>>? sample;
+    StreamSubscription<RecognitionGraphFrame>? capture;
+    final completed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, refresh) => AlertDialog(
+          title: const Text('Record FSL sample'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: labelController,
+                  onChanged: (_) => refresh(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'Sign label',
+                    hintText: 'For example: Tubig',
+                  ),
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: consented,
+                  onChanged: recording
+                      ? null
+                      : (value) => refresh(() => consented = value ?? false),
+                  title: const Text(
+                    'I have permission from the signer to save this skeletal sample.',
+                  ),
+                  subtitle: const Text(
+                    'Only normalized landmarks are saved; no video or audio is recorded.',
+                  ),
+                ),
+                if (recording) LinearProgressIndicator(value: count / 60),
+                if (recording)
+                  Text('Collecting distinct valid frames: $count / 60'),
+                if (sample != null)
+                  const Text('60-frame sequence captured and ready to save.'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: recording
+                  ? null
+                  : () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            if (sample != null)
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Save sample'),
+              )
+            else
+              FilledButton(
+                onPressed:
+                    recording ||
+                        !consented ||
+                        labelController.text.trim().isEmpty
+                    ? null
+                    : () {
+                        refresh(() => recording = true);
+                        DateTime? lastCaptured;
+                        final frames = <List<List<double>>>[];
+                        capture = stream.listen((frame) {
+                          if (frame.capturedAt == lastCaptured ||
+                              frame.normalizedJoints.length != 75 ||
+                              frame.sequenceLength < 24) {
+                            return;
+                          }
+                          lastCaptured = frame.capturedAt;
+                          frames.add(
+                            frame.normalizedJoints
+                                .map(List<double>.from)
+                                .toList(growable: false),
+                          );
+                          refresh(() {
+                            count = frames.length;
+                            if (count >= 60) {
+                              sample = frames.take(60).toList(growable: false);
+                              recording = false;
+                            }
+                          });
+                          if (frames.length >= 60) unawaited(capture?.cancel());
+                        });
+                      },
+                child: Text(recording ? 'Recording…' : 'Start recording'),
+              ),
+          ],
+        ),
+      ),
+    );
+    await capture?.cancel();
+    if (completed == true && sample != null) {
+      try {
+        final directory = await getApplicationDocumentsDirectory();
+        final outputDir = Directory(
+          '${directory.path}${Platform.pathSeparator}FSLTrainingSamples',
+        );
+        await outputDir.create(recursive: true);
+        final safeLabel = labelController.text
+            .trim()
+            .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
+            .replaceAll(RegExp(r'^_+|_+$'), '');
+        final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
+          ':',
+          '-',
+        );
+        final file = File(
+          '${outputDir.path}${Platform.pathSeparator}${safeLabel}_$stamp.json',
+        );
+        await file.writeAsString(
+          const JsonEncoder.withIndent('  ').convert({
+            'schema_version': 1,
+            'label': labelController.text.trim(),
+            'shape': [60, 75, 3],
+            'features': sample,
+            'coordinate_space':
+                'shoulder-centered, shoulder-width normalized xyz; pose[0:33], left_hand[33:54], right_hand[54:75]',
+            'consent_confirmed': true,
+            'video_or_audio_saved': false,
+            'captured_at_utc': DateTime.now().toUtc().toIso8601String(),
+          }),
+        );
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [XFile(file.path, mimeType: 'application/json')],
+            subject: 'FSL skeleton sample: ${labelController.text.trim()}',
+          ),
+        );
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not save sample: $error')),
+          );
+        }
+      }
+    }
+    labelController.dispose();
+  }
 
   void _cycleRecognitionMode() {
     setState(() {
@@ -93,12 +388,12 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     });
     _recognitionProvider?.setMode(_currentMode);
     final modeLabel = _currentMode == RecognitionMode.phrases
-        ? 'Phrases • sign one item, hold briefly, then lower your hands'
+        ? 'Known phrases • one trained item per gesture; lower hands between items'
         : _currentMode == RecognitionMode.alphabet
         ? 'A–Z, Ng, Ñ • sign letters one at a time; the assembler builds words'
         : _currentMode == RecognitionMode.medical
         ? 'Medical • sign one health item, hold briefly, then lower your hands'
-        : 'Auto • moving phrases and steady letters; choose Medical for health signs';
+        : 'Auto • supported signs and steady letters; choose Medical for health signs';
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -122,12 +417,15 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     _cameraService = CameraService();
     _ttsService = context.read<TtsService>();
     _recognitionProvider = context.read<RecognitionProvider>();
+    // The recognition provider outlives this screen; keep the visible mode in
+    // sync when navigating away and returning to the camera.
+    _currentMode = _recognitionProvider!.mode;
     unawaited(_loadSignAnimationCatalog());
     unawaited(_loadSyncedVocabulary());
     _predictionSubscription = _recognitionProvider!.predictions.listen((
       prediction,
     ) {
-      if (mounted) {
+      if (mounted && _predictionMatchesMode(prediction)) {
         final labelChanged = _currentPrediction?.label != prediction.label;
         if (labelChanged) {
           // Tactile haptic feedback for Deaf / Hard-of-Hearing users
@@ -136,6 +434,16 @@ class _SignToTextScreenState extends State<SignToTextScreen>
         setState(() {
           _currentPrediction = prediction;
           _lastRecognizedSign = prediction;
+        });
+        // A post-frame callback makes the timing end at the UI update rather
+        // than when the recognition isolate emitted its result.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _benchmark.recordDisplayedResult(
+              label: prediction.label,
+              now: DateTime.now(),
+            );
+          }
         });
         if (labelChanged) _scheduleGestureReplay(prediction.label);
         _handlePredictionAssembly(prediction);
@@ -155,6 +463,8 @@ class _SignToTextScreenState extends State<SignToTextScreen>
             _snapshotGestureReplay();
             _currentPrediction = null;
             _recentLandmarkFrames.clear();
+            _liveLandmarks = const [];
+            _liveGraphFrame = null;
           }
         });
       }
@@ -163,17 +473,31 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     _landmarksSubscription = _recognitionProvider?.landmarkPointsStream?.listen(
       (hands) {
         if (mounted) {
+          if (_isPaused) {
+            setState(() => _liveLandmarks = const []);
+            return;
+          }
           final frame = hands
               .map((hand) => List<Offset>.unmodifiable(hand))
               .toList(growable: false);
-          _recentLandmarkFrames.add(frame);
-          if (_recentLandmarkFrames.length > 42) {
-            _recentLandmarkFrames.removeAt(0);
+          if (frame.isNotEmpty) {
+            _recentLandmarkFrames.add(frame);
+            if (_recentLandmarkFrames.length > 42) {
+              _recentLandmarkFrames.removeAt(0);
+            }
           }
           setState(() => _liveLandmarks = frame);
         }
       },
     );
+    _graphFramesSubscription = _recognitionProvider?.graphFrames?.listen((
+      frame,
+    ) {
+      if (!mounted) return;
+      setState(() {
+        _liveGraphFrame = _isPaused || frame.hands.isEmpty ? null : frame;
+      });
+    });
 
     // Check for Google Maps style background model OTA updates if connected
     Future.delayed(const Duration(seconds: 4), () {
@@ -602,6 +926,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   }
 
   void _processFrame(CameraImage image) {
+    _benchmark.recordCameraFrame(DateTime.now());
     if (_isProcessingFrame || _recognitionProvider == null) return;
     _isProcessingFrame = true;
     final orientation = _cameraService.selectedCamera?.sensorOrientation;
@@ -735,6 +1060,10 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     ).hasMatch(label);
 
     if (isAlphabetToken) {
+      if (_currentMode != RecognitionMode.alphabet &&
+          _currentMode != RecognitionMode.auto) {
+        return;
+      }
       setState(() {
         _activeWordBuffer += normalizedLetter;
         _suggestedWords = _wordPredictionService.getPredictions(
@@ -751,6 +1080,22 @@ class _SignToTextScreenState extends State<SignToTextScreen>
           }
         }
       });
+    }
+  }
+
+  bool _predictionMatchesMode(SignResult prediction) {
+    switch (prediction.source) {
+      case 'fsl_alphabet_model':
+      case 'trajectory_j_detector':
+        return _currentMode == RecognitionMode.alphabet ||
+            _currentMode == RecognitionMode.auto;
+      case 'st_gcn_model':
+        return _currentMode == RecognitionMode.phrases ||
+            _currentMode == RecognitionMode.auto;
+      case 'fsl_medical_model':
+        return _currentMode == RecognitionMode.medical;
+      default:
+        return true;
     }
   }
 
@@ -868,6 +1213,11 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     setState(() {
       _isPaused = newPaused;
       _isManuallyPaused = newPaused;
+      if (newPaused) {
+        _liveLandmarks = const [];
+        _liveGraphFrame = null;
+        _recentLandmarkFrames.clear();
+      }
     });
     _recognitionProvider?.setPaused(newPaused);
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -913,7 +1263,12 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     final wasPaused = _isPaused;
 
     if (!wasPaused) {
-      setState(() => _isPaused = true);
+      setState(() {
+        _isPaused = true;
+        _liveLandmarks = const [];
+        _liveGraphFrame = null;
+        _recentLandmarkFrames.clear();
+      });
       _recognitionProvider?.setPaused(true);
     }
 
@@ -948,7 +1303,11 @@ class _SignToTextScreenState extends State<SignToTextScreen>
     _predictionSubscription?.cancel();
     _pauseSubscription?.cancel();
     _landmarksSubscription?.cancel();
+    _graphFramesSubscription?.cancel();
     _frameSubscription?.cancel();
+    _benchmarkDeviceController.dispose();
+    _benchmarkAndroidController.dispose();
+    _benchmarkConditionsController.dispose();
     unawaited(_cameraService.dispose());
     final recognitionProvider = _recognitionProvider;
     if (recognitionProvider != null) unawaited(recognitionProvider.stop());
@@ -1014,6 +1373,11 @@ class _SignToTextScreenState extends State<SignToTextScreen>
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.analytics_outlined, color: _kAppBlue),
+            tooltip: 'Recognition pipeline and vocabulary status',
+            onPressed: _showRecognitionPipeline,
+          ),
           if (kIsWeb)
             IconButton(
               icon: Icon(
@@ -1047,6 +1411,18 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                 HapticFeedback.selectionClick();
                 _showCameraPicker();
               },
+            ),
+          if (_canBenchmarkOnThisDevice)
+            IconButton(
+              icon: Icon(
+                _benchmark.isRunning
+                    ? Icons.timer_rounded
+                    : Icons.timer_outlined,
+                color: _benchmark.isRunning ? _kAppBlue : null,
+              ),
+              tooltip: 'Local Android benchmark',
+              visualDensity: VisualDensity.compact,
+              onPressed: _showBenchmarkSheet,
             ),
           const SizedBox(width: 4),
           const ConnectivityBadge(),
@@ -1672,6 +2048,10 @@ class _SignToTextScreenState extends State<SignToTextScreen>
   Widget _buildCameraView() {
     final mediaQuery = MediaQuery.of(context);
     final topPadding = mediaQuery.padding.top + kToolbarHeight + 8;
+    final graphFrame = _isPaused || _liveGraphFrame?.hands.isEmpty != false
+        ? null
+        : _liveGraphFrame;
+    final visibleHands = _isPaused ? const <List<Offset>>[] : _liveLandmarks;
 
     return Stack(
       fit: StackFit.expand,
@@ -1690,17 +2070,23 @@ class _SignToTextScreenState extends State<SignToTextScreen>
             final ph = isRotated
                 ? (previewSize?.width.toInt() ?? 640)
                 : (previewSize?.height.toInt() ?? 480);
-            return HandLandmarkOverlay(
-              hands: _liveLandmarks,
-              frameWidth: pw,
-              frameHeight: ph,
-              mirror: false,
-            );
+            return _showGraphOverlay
+                ? SkeletonGraphOverlay(
+                    frame: graphFrame,
+                    frameWidth: pw,
+                    frameHeight: ph,
+                  )
+                : HandLandmarkOverlay(
+                    hands: visibleHands,
+                    frameWidth: pw,
+                    frameHeight: ph,
+                    mirror: false,
+                  );
           },
         ),
         SigningSpaceOverlay(
           showUpperBodyGuide: _currentMode != RecognitionMode.alphabet,
-          handsDetected: _liveLandmarks.isNotEmpty,
+          handsDetected: visibleHands.isNotEmpty,
         ),
         Positioned(
           top: topPadding,
@@ -1708,6 +2094,30 @@ class _SignToTextScreenState extends State<SignToTextScreen>
           right: 16,
           child: _buildRecognitionStatus(),
         ),
+        if (_showGraphOverlay && graphFrame != null)
+          Positioned(
+            top: topPadding + 84,
+            left: 16,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.56),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                  child: Text(
+                    'Blue: body/arms · Green: hands · Yellow: joints',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
         Positioned(
           bottom: 0,
           left: 0,
@@ -1761,7 +2171,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Top bar: Composed sentence and active letter buffer
+                // Top bar: composed message and active fingerspelling buffer.
                 Row(
                   children: [
                     Container(
@@ -1788,7 +2198,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                           ),
                           children: [
                             const TextSpan(
-                              text: 'Word: ',
+                              text: 'Message: ',
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
@@ -1839,7 +2249,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                   Row(
                     children: [
                       Text(
-                        'Suggestions:',
+                        'Tap to add:',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -2178,6 +2588,15 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   _ActionButton(
+                    icon: Icons.bookmark_add_rounded,
+                    label: 'Record',
+                    tooltip:
+                        'Record a consented skeleton sequence for FSL training',
+                    semanticLabel: 'Record an FSL training sample',
+                    onPressed: _recordTrainingSample,
+                    color: const Color(0xFFDC2626),
+                  ),
+                  _ActionButton(
                     icon: Icons.volume_up_rounded,
                     label: 'Speak',
                     tooltip: 'Pronounce sign or sentence',
@@ -2376,13 +2795,13 @@ class _SignToTextScreenState extends State<SignToTextScreen>
         : 'Place the phone at eye level and step back until your head, chest, and both hands fit in the guide.';
     final signingHint = switch (_currentMode) {
       RecognitionMode.phrases =>
-        'Sign one phrase clearly, then lower your hands briefly.',
+        'Sign one trained phrase as a single gesture, then lower your hands. Continuous sentence translation is not available in this mode.',
       RecognitionMode.alphabet =>
         'Hold one letter steady; lower your hand between letters.',
       RecognitionMode.medical =>
         'Sign one health item, then lower your hands briefly.',
       RecognitionMode.auto =>
-        'Sign one item at a time, then lower your hands briefly.',
+        'Sign one supported item at a time, then lower your hands briefly.',
     };
 
     final String message;
@@ -2557,7 +2976,7 @@ class _SignToTextScreenState extends State<SignToTextScreen>
                           ? Icons.medical_services_rounded
                           : Icons.auto_mode_rounded,
                       label: _currentMode == RecognitionMode.phrases
-                          ? 'Phrases'
+                          ? 'Known phrases'
                           : _currentMode == RecognitionMode.alphabet
                           ? 'A–Z'
                           : _currentMode == RecognitionMode.medical
@@ -2647,6 +3066,168 @@ class _SignToTextScreenState extends State<SignToTextScreen>
       ),
     );
   }
+
+  void _showBenchmarkSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              4,
+              20,
+              20 + MediaQuery.viewInsetsOf(context).bottom,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Android benchmark (local only)',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Measures camera frames delivered over the most recent 10 seconds and the time from your completion mark to the next result drawn on screen. Nothing is uploaded.',
+                    style: TextStyle(color: Color(0xFF64748B)),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _benchmarkDeviceController,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(
+                      labelText: 'Device model / build',
+                      hintText: 'e.g., Pixel 7, app 1.0.0+2019',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _benchmarkAndroidController,
+                    textInputAction: TextInputAction.next,
+                    decoration: const InputDecoration(
+                      labelText: 'Android version',
+                      hintText: 'e.g., Android 14',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _benchmarkConditionsController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Test conditions',
+                      hintText:
+                          'lighting, camera, distance, mode, battery/thermal state',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _benchmarkMetric(
+                        'Camera FPS',
+                        '${_benchmark.sustainedFps.toStringAsFixed(1)} (last 10 s)',
+                      ),
+                      _benchmarkMetric('Trials', '${_benchmark.sampleCount}'),
+                      _benchmarkMetric(
+                        'Median',
+                        _benchmark.medianLatencyMs == null
+                            ? '—'
+                            : '${_benchmark.medianLatencyMs} ms',
+                      ),
+                      _benchmarkMetric(
+                        'P95',
+                        _benchmark.p95LatencyMs == null
+                            ? '—'
+                            : '${_benchmark.p95LatencyMs} ms',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (!_benchmark.isRunning)
+                    FilledButton.icon(
+                      onPressed: () {
+                        _benchmark.start(DateTime.now());
+                        setState(() {});
+                        setSheetState(() {});
+                      },
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: const Text('Start new local run'),
+                    )
+                  else ...[
+                    FilledButton.icon(
+                      onPressed: _benchmark.awaitingResult
+                          ? null
+                          : () {
+                              _benchmark.markSignCompletion(DateTime.now());
+                              setSheetState(() {});
+                            },
+                      icon: const Icon(Icons.flag_rounded),
+                      label: Text(
+                        _benchmark.awaitingResult
+                            ? 'Waiting for displayed result…'
+                            : 'Mark sign complete',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Clipboard.setData(
+                          ClipboardData(
+                            text: _benchmark.localReport(
+                              device: _benchmarkDeviceController.text,
+                              androidVersion: _benchmarkAndroidController.text,
+                              conditions: _benchmarkConditionsController.text,
+                            ),
+                          ),
+                        );
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Local benchmark report copied.'),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.copy_rounded),
+                      label: const Text('Copy local report'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        _benchmark.stop();
+                        setState(() {});
+                        setSheetState(() {});
+                      },
+                      child: const Text('Stop benchmark'),
+                    ),
+                  ],
+                  const SizedBox(height: 4),
+                  const Text(
+                    'For each trial, begin signing, tap “Mark sign complete” at the end of the gesture, then wait for the result. Collect at least 20 trials after the FPS readout has stabilised.',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _benchmarkMetric(String label, String value) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    decoration: BoxDecoration(
+      color: _kAppBlue.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Text(
+      '$label: $value',
+      style: const TextStyle(fontWeight: FontWeight.w700),
+    ),
+  );
 }
 
 class _ActionButton extends StatelessWidget {

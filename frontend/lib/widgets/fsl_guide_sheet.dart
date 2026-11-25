@@ -9,6 +9,8 @@ const String _kAlphabetChartUrl =
     'https://eccdcouncil.gov.ph/wp-content/uploads/2024/10/Guidebook-on-Inclusion-V14_F.pdf';
 const String _kGreetingsSourceUrl =
     'https://sites.google.com/depedmanila.net/pangkat1/fsl-filipino-sign-language/tarat-matuto-mag-fsl/mga-pagbati';
+const String _kFslLanguageSourceUrl =
+    'https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/2/96594';
 
 void showFslGuideSheet(BuildContext context) {
   showModalBottomSheet(
@@ -108,31 +110,36 @@ void showFslGuideSheet(BuildContext context) {
                               Padding(
                                 padding: EdgeInsets.only(bottom: 8),
                                 child: Text(
-                                  'These are phrase examples documented by DepEd Manila. Watch the source lesson for the actual signing; the text here is not a substitute for its handshape, movement, facial expression, or regional variation.',
+                                  'English explanations are provided for ASL-first readers. FSL and ASL are distinct sign languages, so an English translation does not make the signs interchangeable. These phrase examples are documented by DepEd Manila; follow the linked FSL lesson for handshape, movement, facial expression, and regional variation.',
                                   style: TextStyle(fontSize: 13, height: 1.4),
                                 ),
                               ),
                               FslGuideItem(
-                                'KUMUSTA KA?',
-                                'Senyas-Salin gloss: KUMUSTA – IKAW',
+                                'HOW ARE YOU? · KUMUSTA KA?',
+                                'Senyas-Salin gloss: KUMUSTA (HELLO) – IKAW (YOU)',
                               ),
                               FslGuideItem(
-                                'ANONG PANGALAN MO?',
-                                'Senyas-Salin gloss: IKAW – PANGALAN – ANO',
+                                'WHAT IS YOUR NAME? · ANONG PANGALAN MO?',
+                                'Senyas-Salin gloss: IKAW (YOU) – PANGALAN (NAME) – ANO (WHAT)',
                               ),
                               FslGuideItem(
-                                'OO / HINDI',
-                                'Shown together in the Senyas-Salin “Oo at Hindi” lesson',
+                                'YES / NO · OO / HINDI',
+                                'Both signs are shown in the Senyas-Salin “Oo at Hindi” lesson.',
                               ),
                               FslGuideItem(
-                                'MAGANDANG ARAW!',
-                                'Senyas-Salin gloss: MAGANDANG – ARAW',
+                                'GOOD DAY! · MAGANDANG ARAW!',
+                                'Senyas-Salin gloss: MAGANDANG (GOOD) – ARAW (DAY)',
                               ),
                               FslGuideItem(
-                                'MAGANDANG UMAGA / TANGHALI / HAPON / GABI',
-                                'Included in the Senyas-Salin greetings lesson',
+                                'GOOD MORNING / NOON / AFTERNOON / EVENING · MAGANDANG UMAGA / TANGHALI / HAPON / GABI',
+                                'These greetings are included in the Senyas-Salin lesson.',
                               ),
                               SizedBox(height: 8),
+                              FslGuideSourceCard(
+                                title:
+                                    'Supreme Court E-Library · FSL and ASL distinction (RA 11106 IRR)',
+                                url: _kFslLanguageSourceUrl,
+                              ),
                               FslGuideSourceCard(
                                 title:
                                     'DepEd Manila · Senyas-Salin: Mga Pagbati',
@@ -147,7 +154,7 @@ void showFslGuideSheet(BuildContext context) {
                             physics: const BouncingScrollPhysics(),
                             children: const [
                               FslGuideItem(
-                                'DOKTOR',
+                                'DOCTOR · DOKTOR',
                                 'Fingertips of curved hand tap dominant wrist radial artery (checking pulse)',
                               ),
                               FslGuideItem(
@@ -155,63 +162,63 @@ void showFslGuideSheet(BuildContext context) {
                                 'N-handshape (two fingers over thumb) taps inner wrist twice gently',
                               ),
                               FslGuideItem(
-                                'GAMOT',
+                                'MEDICINE · GAMOT',
                                 'Middle finger of dominant hand stirs in open palm of non-dominant hand (mortar & pestle)',
                               ),
                               FslGuideItem(
-                                'SAKIT / MASAKIT',
+                                'PAIN · SAKIT / MASAKIT',
                                 'Two index fingers point toward each other and twist back and forth at pain area',
                               ),
                               FslGuideItem(
-                                'MASAKIT ANG ULO',
+                                'HEADACHE · MASAKIT ANG ULO',
                                 'Index finger pain sign held near temples with tense expression',
                               ),
                               FslGuideItem(
-                                'LAGNAT',
+                                'FEVER · LAGNAT',
                                 'Back of dominant hand rests against forehead checking body temperature',
                               ),
                               FslGuideItem(
-                                'SIPON',
+                                'RUNNY NOSE · SIPON',
                                 'Pinched index and thumb wipe down from nostrils mimicking runny nose',
                               ),
                               FslGuideItem(
-                                'BAHING',
+                                'SNEEZING · BAHING',
                                 'Index finger rests under nose then head jerks forward mimicking sneeze',
                               ),
                               FslGuideItem(
-                                'PAGHINGA',
+                                'BREATHING · PAGHINGA',
                                 'Both open palms move toward and away from chest rhythmically',
                               ),
                               FslGuideItem(
-                                'NAHIHIRAPAN HUMINGA',
+                                'DIFFICULTY BREATHING · NAHIHIRAPAN HUMINGA',
                                 'Both hands claw over chest with distressed facial expression',
                               ),
                               FslGuideItem(
-                                'NAHIHILO',
+                                'DIZZINESS · NAHIHILO',
                                 'Curved fingers circle clockwise around head while tilting slightly',
                               ),
                               FslGuideItem(
-                                'PAGOD',
+                                'TIRED · PAGOD',
                                 'Fingertips on chest drop downward as wrists slump forward',
                               ),
                               FslGuideItem(
-                                'DUMUDUGO',
+                                'BLEEDING · DUMUDUGO',
                                 'Fingertips flutter downward from injured spot mimicking dripping blood',
                               ),
                               FslGuideItem(
-                                'PAMAMAGA',
+                                'SWELLING · PAMAMAGA',
                                 'Curved hands start small and expand outward indicating swelling',
                               ),
                               FslGuideItem(
-                                'TENSIYON',
+                                'BLOOD PRESSURE · TENSIYON',
                                 'Dominant hand wraps around upper arm pumping blood pressure cuff',
                               ),
                               FslGuideItem(
-                                'ANXIETY / DEPRESYON',
+                                'ANXIETY / DEPRESSION · ANXIETY / DEPRESYON',
                                 'Flat hands slide down chest slowly with a sighing expression',
                               ),
                               FslGuideItem(
-                                'ALLERGIC',
+                                'ALLERGY · ALLERGIC',
                                 'Index finger scratches forearm upward then signs Sakit/Reaction',
                               ),
                             ],
@@ -231,7 +238,7 @@ void showFslGuideSheet(BuildContext context) {
                               SizedBox(height: 8),
                               FslGuideSourceCard(
                                 title:
-                                    'KonsultaKamay · FSL Alphabet (includes Ñ and NG)',
+                                    'KonsultaKamay · FSL alphabet video (includes Ñ and NG)',
                                 url: _kAlphabetVideoUrl,
                               ),
                               FslGuideSourceCard(
@@ -276,7 +283,7 @@ void showFslGuideSheet(BuildContext context) {
                                 icon: Icons.toggle_on_rounded,
                                 title: 'Mode Selection for High Precision',
                                 description:
-                                    'Tap "Mode" on Sign-to-Text to switch to "A–Z" for fingerspelling, "Phrases" for conversational signs, or "Medical" for health symptoms.',
+                                    'Tap "Mode" on Sign-to-Text to switch to "A–Z" for fingerspelling, "Known phrases" to classify one trained sign or expression per gesture, or "Medical" for health signs. Continuous sentence translation is not available yet.',
                               ),
                               FslGuideTipCard(
                                 icon: Icons.speed_rounded,

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:dio/dio.dart';
 import 'package:tinigsenyas/models/sign_result.dart';
+import 'package:tinigsenyas/models/recognition_graph_frame.dart';
 import 'package:tinigsenyas/services/settings_service.dart';
 import 'recognition_service.dart';
 
@@ -110,9 +111,7 @@ class BackendRecognitionService implements RecognitionService {
     final runId = ++_recognitionRunId;
     _isRunning = true;
     _pollingTimer?.cancel();
-    _pollingTimer = Timer.periodic(const Duration(milliseconds: 150), (
-      _,
-    ) {
+    _pollingTimer = Timer.periodic(const Duration(milliseconds: 150), (_) {
       if (!_isRunning || runId != _recognitionRunId || _isPollingPrediction) {
         return;
       }
@@ -254,6 +253,9 @@ class BackendRecognitionService implements RecognitionService {
               .toList();
         }).toList();
       });
+
+  @override
+  Stream<RecognitionGraphFrame>? get graphFrames => null;
 
   @override
   Future<void> reloadModels() async {

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import '../models/sign_result.dart';
+import '../models/recognition_graph_frame.dart';
 import '../services/recognition/recognition_service.dart';
 import '../services/recognition/tflite_recognition_service.dart';
 import '../services/recognition/backend_recognition_service.dart';
@@ -26,8 +27,11 @@ class RecognitionProvider extends ChangeNotifier {
     _service.setPaused(value);
     notifyListeners();
   }
+
   Stream<bool>? get pauseStatus => _service.pauseStatus;
-  Stream<List<List<Offset>>>? get landmarkPointsStream => _service.landmarkPointsStream;
+  Stream<List<List<Offset>>>? get landmarkPointsStream =>
+      _service.landmarkPointsStream;
+  Stream<RecognitionGraphFrame>? get graphFrames => _service.graphFrames;
 
   bool _isInitialized = false;
   bool get isInitialized => _isInitialized;

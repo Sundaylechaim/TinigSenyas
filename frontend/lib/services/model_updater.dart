@@ -97,6 +97,10 @@ class ModelUpdater {
     'medical_labels.txt',
     'alphabet_labels.txt',
   };
+  static const _phraseExtensionFiles = <String>{
+    'fsl_phrase_extension.tflite',
+    'phrase_extension_labels.json',
+  };
   static const defaultRemoteManifestUrl =
       'https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/manifest.json';
   static const _manifestAsset = 'assets/model/manifest.json';
@@ -236,7 +240,7 @@ class ModelUpdater {
                 ? UpdateStatus.error
                 : UpdateStatus.upToDate,
             errorMessage: invalidNewerManifest
-                ? 'The newer model manifest must contain all six model and label files with valid URLs and SHA-256 checksums.'
+                ? 'The model manifest is incomplete or has invalid URLs/checksums. It must contain all six core files and either both phrase-extension files or neither.'
                 : null,
           );
         }
@@ -277,7 +281,7 @@ class ModelUpdater {
             ? UpdateStatus.error
             : UpdateStatus.upToDate,
         errorMessage: invalidNewerManifest
-            ? 'The newer model manifest must contain all six model and label files with valid URLs and SHA-256 checksums.'
+            ? 'The model manifest is incomplete or has invalid URLs/checksums. It must contain all six core files and either both phrase-extension files or neither.'
             : null,
       );
     } catch (e) {
@@ -311,7 +315,7 @@ class ModelUpdater {
       yield info.copyWith(
         status: UpdateStatus.error,
         errorMessage:
-            'The model update must contain all six model and label files with valid URLs and SHA-256 checksums.',
+            'The model update must contain all six core files and either both phrase-extension files or neither, with valid URLs and SHA-256 checksums.',
       );
       return;
     }
@@ -449,12 +453,18 @@ class ModelUpdater {
   }
 
   bool _hasValidModelSet(List<ModelFileEntry> files) {
-    if (files.length != _requiredModelFiles.length ||
-        files.map((entry) => entry.name).toSet().length != files.length ||
-        !files
-            .map((entry) => entry.name)
-            .toSet()
-            .containsAll(_requiredModelFiles)) {
+    final names = files.map((entry) => entry.name).toSet();
+    final hasExtension = names.intersection(_phraseExtensionFiles).isNotEmpty;
+    if (names.length != files.length ||
+        !names.containsAll(_requiredModelFiles) ||
+        (hasExtension && !names.containsAll(_phraseExtensionFiles)) ||
+        names.length !=
+            _requiredModelFiles.length +
+                (hasExtension ? _phraseExtensionFiles.length : 0) ||
+        names
+            .difference(_requiredModelFiles)
+            .difference(_phraseExtensionFiles)
+            .isNotEmpty) {
       return false;
     }
     return files.every(_isSafeModelEntry);

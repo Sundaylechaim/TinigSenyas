@@ -54,7 +54,18 @@ class _ModelUpdateDialogState extends State<ModelUpdateDialog> {
         }
       } catch (e) {
         debugPrint('[Shorebird] Update check: $e');
+        if (mounted) {
+          setState(() {
+            _appUpdateNotice =
+                'Could not check the app update. Check your internet connection and try again.';
+          });
+        }
       }
+    } else {
+      // A plain Flutter APK cannot receive Dart code patches. Do not present
+      // the model result as proof that the app code is current.
+      _appUpdateNotice =
+          'App-code OTA is unavailable in this installed APK. Install the current TinigSenyas APK once, then future app updates download automatically.';
     }
 
     // 2. Check FSL AI Model Updates

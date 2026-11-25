@@ -1,10 +1,10 @@
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_model.tflite",
   "sha256": "f7b7a93af2062d5547593c4c801755fd632c4888f53e82a41568a1c94ffd975f",
-  "min_app_version": "1.2.16",
-  "min_app_build": 2019,
-  "notes": "6199 archive candidate model bundle for local pilot testing. Signer-independent validation with Deaf FSL users is still required.",
+  "min_app_version": "1.0.1",
+  "min_app_build": 2020,
+  "notes": "Adds the 100-class ST-GCN phrase-extension head alongside the existing phrase, medical, and alphabet models. Existing vocabulary remains active; extension-only labels use a high-confidence gate.",
   "models": [
     {
       "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_alphabet.tflite",
@@ -35,6 +35,16 @@
       "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/alphabet_labels.txt",
       "name": "alphabet_labels.txt",
       "sha256": "a24afda814103bd4bece254505c63233fad8b7594a46edc5777f32c193409e5b"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/fsl_phrase_extension.tflite",
+      "name": "fsl_phrase_extension.tflite",
+      "sha256": "209c1373cb464bbb453444ff7c82aa5a409574e043029566cebd24de35ef5200"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/Sundaylechaim/TinigSenyas/main/frontend/assets/model/phrase_extension_labels.json",
+      "name": "phrase_extension_labels.json",
+      "sha256": "65d5905e3bc2c74cb3d4ef53030cdbc604d224e84527d689dd4b7179755e1a34"
     }
   ]
 }

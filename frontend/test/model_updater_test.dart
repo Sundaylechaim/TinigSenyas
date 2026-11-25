@@ -10,9 +10,9 @@ import 'package:tinigsenyas/services/model_updater.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('uses the v1.0.0 app identity and monotonic build number', () {
-    expect(AppVersion.name, '1.0.0');
-    expect(AppVersion.buildNumber, 2019);
+  test('uses the pubspec app identity and monotonic build number', () {
+    expect(AppVersion.name, '1.0.1');
+    expect(AppVersion.buildNumber, 2020);
     expect(ModelUpdater.currentAppVersion, AppVersion.name);
     expect(ModelUpdater.currentAppBuild, AppVersion.buildNumber);
   });
@@ -23,7 +23,7 @@ void main() {
       SharedPreferences.setMockInitialValues({'model_version': '1.3.0'});
       final dio = Dio()
         ..httpClientAdapter = _ManifestAdapter({
-          'version': '1.3.1',
+          'version': '1.4.1',
           'min_app_version': '1.2.16',
           'min_app_build': 2019,
           'models': _validModelEntries(),
@@ -36,16 +36,76 @@ void main() {
       final info = await updater.checkForUpdates();
 
       expect(info.status, UpdateStatus.updateAvailable);
-      expect(info.version, '1.3.1');
+      expect(info.version, '1.4.1');
       expect(info.models, hasLength(6));
     },
   );
+
+  test(
+    'accepts the phrase-extension model and label map as a matched pair',
+    () async {
+      SharedPreferences.setMockInitialValues({'model_version': '1.3.0'});
+      final dio = Dio()
+        ..httpClientAdapter = _ManifestAdapter({
+          'version': '1.4.1',
+          'min_app_version': '1.0.0',
+          'min_app_build': 2020,
+          'models': [
+            ..._validModelEntries(),
+            for (final name in const [
+              'fsl_phrase_extension.tflite',
+              'phrase_extension_labels.json',
+            ])
+              {
+                'name': name,
+                'url': 'https://example.com/$name',
+                'sha256': _validSha256,
+              },
+          ],
+        });
+
+      final updater = ModelUpdater(
+        dio: dio,
+        remoteManifestUrl: 'https://example.com/manifest.json',
+      );
+      final info = await updater.checkForUpdates();
+
+      expect(info.status, UpdateStatus.updateAvailable);
+      expect(info.models, hasLength(8));
+    },
+  );
+
+  test('rejects an OTA with only half of the phrase-extension pair', () async {
+    SharedPreferences.setMockInitialValues({'model_version': '1.3.0'});
+    final dio = Dio()
+      ..httpClientAdapter = _ManifestAdapter({
+        'version': '1.4.1',
+        'min_app_version': '1.0.1',
+        'min_app_build': 2020,
+        'models': [
+          ..._validModelEntries(),
+          {
+            'name': 'fsl_phrase_extension.tflite',
+            'url': 'https://example.com/fsl_phrase_extension.tflite',
+            'sha256': _validSha256,
+          },
+        ],
+      });
+
+    final updater = ModelUpdater(
+      dio: dio,
+      remoteManifestUrl: 'https://example.com/manifest.json',
+    );
+    final info = await updater.checkForUpdates();
+
+    expect(info.status, UpdateStatus.error);
+  });
 
   test('rejects a newer manifest that omits model or label files', () async {
     SharedPreferences.setMockInitialValues({'model_version': '1.3.0'});
     final dio = Dio()
       ..httpClientAdapter = _ManifestAdapter({
-        'version': '1.3.1',
+        'version': '1.4.1',
         'min_app_version': '1.2.16',
         'min_app_build': 2019,
         'models': [
@@ -64,7 +124,7 @@ void main() {
     final info = await updater.checkForUpdates();
 
     expect(info.status, UpdateStatus.error);
-    expect(info.errorMessage, contains('all six model and label files'));
+    expect(info.errorMessage, contains('all six core files'));
   });
 
   test(
@@ -79,7 +139,7 @@ void main() {
       };
       final dio = Dio()
         ..httpClientAdapter = _ManifestAdapter({
-          'version': '1.3.1',
+          'version': '1.4.1',
           'min_app_version': '1.2.16',
           'min_app_build': 2019,
           'models': models,
@@ -119,7 +179,7 @@ void main() {
       ..httpClientAdapter = _ManifestAdapter({
         'version': '2.0.0',
         'min_app_version': '1.0.0',
-        'min_app_build': 2020,
+        'min_app_build': 2021,
         'models': _validModelEntries(),
       });
 
@@ -150,7 +210,7 @@ void main() {
       final info = await updater.checkForUpdates();
       final preferences = await SharedPreferences.getInstance();
 
-      expect(info.currentVersion, '1.3.0');
+      expect(info.currentVersion, '1.4.0');
       expect(info.status, UpdateStatus.upToDate);
       expect(preferences.getString('model_version'), '1.2.2');
     },

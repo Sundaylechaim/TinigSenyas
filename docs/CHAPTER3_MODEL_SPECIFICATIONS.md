@@ -4,7 +4,7 @@
 **Institution:** Eulogio "Amang" Rodriguez Institute of Science and Technology (EARIST)  
 **Community Partner:** KAINAKAP Inclusive and Opportunity Inc.  
 **Model Checkpoint:** `best_fsl_model.keras` (103 outputs) → quantized as the shipped `fsl_model.tflite`
-**Vocabulary Capacity:** 103 conversational FSL classes in `fsl_model.tflite`, 35 medical outputs in `fsl_medical.tflite` matched by 35 entries in `medical_labels.txt`, and 28 alphabet outputs in `fsl_alphabet.tflite` (A–Z, `Ng`, and `Ñ`). The app runs the bundled TFLite models; the Keras checkpoint is retained for training and conversion only.
+**Vocabulary Capacity:** 103 conversational FSL classes in `fsl_model.tflite`, an additional 100-class phrase-extension ST-GCN in `fsl_phrase_extension.tflite` with its ordered JSON map, 35 medical outputs in `fsl_medical.tflite`, and 28 alphabet outputs in `fsl_alphabet.tflite` (A–Z, `Ng`, and `Ñ`). The existing conversation head remains authoritative for its labels; the extension only contributes extension-only labels behind a stricter confidence gate. The app runs bundled TFLite models; Keras checkpoints remain training artifacts.
 
 ---
 
@@ -93,7 +93,7 @@ This preserves internal finger orientations (e.g., thumb facing inward) while ma
 
 ## 3. Neural Network Architecture (ST-GCN)
 
-The core architecture stored in [`backend/models/best_fsl_model.keras`](../backend/models/best_fsl_model.keras) utilizes a custom `TFLiteGraphConv` layer optimized for edge execution.
+The core architecture stored in [`tinigsenyas_training/best_fsl_model.keras`](../tinigsenyas_training/best_fsl_model.keras) utilizes a custom graph-convolution layer optimized for edge execution.
 
 ### Model Layer Breakdown
 
